@@ -11,6 +11,7 @@
  */
 
 #include "robohub/secure.h"
+#include "robohub/keystore.h"
 
 #include <string.h>
 
@@ -189,6 +190,8 @@ static const rh_u8 RH_LABEL_HELLO[] = "rh-hello1";
 static const rh_u8 RH_LABEL_SESSION[] = "rh-session1";
 static const rh_u8 RH_LABEL_UP[] = "rh-up1";
 static const rh_u8 RH_LABEL_DOWN[] = "rh-down1";
+static const rh_u8 RH_LABEL_WRAP[] = "rh-wrap1";
+static const rh_u8 RH_LABEL_REKEY_OK[] = "rh-rekey-ok";
 
 static void rh_put_u16(rh_u8* out, rh_u16 v) { out[0] = (rh_u8)v; out[1] = (rh_u8)(v >> 8); }
 static void rh_put_u32(rh_u8* out, rh_u32 v) { out[0] = (rh_u8)v; out[1] = (rh_u8)(v >> 8); out[2] = (rh_u8)(v >> 16); out[3] = (rh_u8)(v >> 24); }
@@ -212,11 +215,13 @@ __attribute__((weak)) int robohub_platform_nonce(rh_u8* out, rh_size length)
 /*  Session                                                                   */
 /* -------------------------------------------------------------------------- */
 
-RoboHubError robohub_secure_init(RoboHubSecure* secure,
-                                 const rh_u8 uid[RH_SECURE_UID_SIZE],
-                                 const rh_u8 device_key[RH_SECURE_KEY_SIZE],
-                                 RoboHubSecureNonce nonce,
-                                 RoboHubSecureClock now_ms)
+RoboHubError robohub_secure_init_epoch(RoboHubSecure* secure,
+                                       const rh_u8 uid[RH_SECURE_UID_SIZE],
+                                       const rh_u8 device_key[RH_SECURE_KEY_SIZE],
+                                       rh_u32 epoch,
+                                       const rh_u8* scope,
+                                       RoboHubSecureNonce nonce,
+                                       RoboHubSecureClock now_ms)
 {
     if (secure == 0 || uid == 0 || device_key == 0 || now_ms == 0) {
         return ROBOHUB_ERR_INVALID_ARG;
@@ -224,8 +229,42 @@ RoboHubError robohub_secure_init(RoboHubSecure* secure,
     memset(secure, 0, sizeof(*secure));
     memcpy(secure->uid, uid, RH_SECURE_UID_SIZE);
     memcpy(secure->device_key, device_key, RH_SECURE_KEY_SIZE);
+    secure->epoch = epoch;
+    if (scope != 0) {
+        memcpy(secure->scope, scope, RH_SECURE_SCOPE_SIZE);
+    }
     secure->nonce = nonce != 0 ? nonce : robohub_platform_nonce;
     secure->now_ms = now_ms;
+    /* A key the gateway rotated this board to outlives a reboot; one older than
+     * the key the firmware was built with (a board flashed again after a
+     * rotation) does not stand in for it, nor does one kept for another
+     * gateway (a board moved to another mesh). */
+    rh_key_t stored;
+    if (rh_keystore_load(&stored) == 0 && stored.epoch > epoch &&
+        memcmp(stored.scope, secure->scope, RH_SECURE_SCOPE_SIZE) == 0) {
+        memcpy(secure->device_key, stored.key, RH_SECURE_KEY_SIZE);
+        secure->epoch = stored.epoch;
+    }
+    memset(&stored, 0, sizeof(stored));
+    return ROBOHUB_OK;
+}
+
+RoboHubError robohub_secure_init(RoboHubSecure* secure,
+                                 const rh_u8 uid[RH_SECURE_UID_SIZE],
+                                 const rh_u8 device_key[RH_SECURE_KEY_SIZE],
+                                 RoboHubSecureNonce nonce,
+                                 RoboHubSecureClock now_ms)
+{
+    return robohub_secure_init_epoch(secure, uid, device_key, 0u, 0, nonce, now_ms);
+}
+
+RoboHubError robohub_secure_on_store(RoboHubSecure* secure, RoboHubSecureStore store, void* user)
+{
+    if (secure == 0) {
+        return ROBOHUB_ERR_INVALID_ARG;
+    }
+    secure->store = store;
+    secure->store_user = user;
     return ROBOHUB_OK;
 }
 
@@ -247,6 +286,13 @@ RoboHubError robohub_secure_hello(RoboHubSecure* secure, rh_u8 out[RH_SECURE_HEL
     }
     if (secure->nonce(secure->nonce_b, RH_SECURE_NONCE_SIZE) != 0) {
         return ROBOHUB_ERR_NOT_SUPPORTED;
+    }
+    /* A key a REKEY gave is the one from the next hello on. */
+    if (secure->has_next) {
+        memcpy(secure->device_key, secure->next_key, RH_SECURE_KEY_SIZE);
+        secure->epoch = secure->next_epoch;
+        memset(secure->next_key, 0, RH_SECURE_KEY_SIZE);
+        secure->has_next = 0u;
     }
     memcpy(out, secure->uid, RH_SECURE_UID_SIZE);
     memcpy(out + RH_SECURE_UID_SIZE, secure->nonce_b, RH_SECURE_NONCE_SIZE);
@@ -371,5 +417,72 @@ RoboHubError robohub_secure_open(RoboHubSecure* secure, rh_u16 msg_id, rh_u16 tx
     secure->rx_counter = counter;
     *inner = payload + 6u;
     *inner_length = body;
+    return ROBOHUB_OK;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Key rotation                                                              */
+/* -------------------------------------------------------------------------- */
+
+RoboHubError robohub_secure_rekey(RoboHubSecure* secure, const rh_u8* payload, rh_size length,
+                                  rh_u8 ack[RH_SECURE_REKEY_ACK_SIZE])
+{
+    if (secure == 0 || payload == 0 || ack == 0 || length != RH_SECURE_REKEY_SIZE ||
+        secure->state != RH_SECURE_ESTABLISHED) {
+        if (secure != 0) {
+            secure->rejected++;
+        }
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+    rh_u32 new_epoch = rh_get_u32(payload);
+    if (new_epoch <= secure->epoch) {
+        secure->rejected++;
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+    /* The mask is bound to this frame's session and counter, which the open
+     * that just accepted it left as the session's id and last counter. */
+    rh_u8 sid_counter[6];
+    rh_put_u16(sid_counter, secure->session_id);
+    rh_put_u32(sid_counter + 2u, secure->rx_counter);
+    rh_u8 mask[RH_SECURE_KEY_SIZE];
+    rh_hmac h;
+    rh_hmac_begin(&h, secure->device_key, RH_SECURE_KEY_SIZE);
+    rh_hmac_add(&h, RH_LABEL_WRAP, sizeof(RH_LABEL_WRAP) - 1u);
+    rh_hmac_add(&h, sid_counter, sizeof(sid_counter));
+    rh_hmac_end(&h, mask, RH_SECURE_KEY_SIZE);
+    rh_key_t next;
+    next.epoch = new_epoch;
+    memcpy(next.scope, secure->scope, RH_SECURE_SCOPE_SIZE);
+    for (rh_u32 i = 0; i < RH_SECURE_KEY_SIZE; i++) {
+        next.key[i] = (rh_u8)(payload[4u + i] ^ mask[i]);
+    }
+    memset(mask, 0, sizeof(mask));
+
+    /* The same REKEY again (an answer that was lost) is answered again without
+     * a second write. */
+    int stored = 0;
+    if (secure->has_next && secure->next_epoch == new_epoch &&
+        rh_equal(secure->next_key, next.key, RH_SECURE_KEY_SIZE)) {
+        stored = 1;
+    } else if (secure->store != 0) {
+        stored = secure->store(next.key, new_epoch, secure->store_user) == 0;
+    } else {
+        stored = rh_keystore_store(&next) == 0;
+    }
+    memset(ack, 0, RH_SECURE_REKEY_ACK_SIZE);
+    if (stored) {
+        rh_u8 epoch_le[4];
+        rh_put_u32(epoch_le, new_epoch);
+        rh_hmac_begin(&h, next.key, RH_SECURE_KEY_SIZE);
+        rh_hmac_add(&h, RH_LABEL_REKEY_OK, sizeof(RH_LABEL_REKEY_OK) - 1u);
+        rh_hmac_add(&h, secure->uid, RH_SECURE_UID_SIZE);
+        rh_hmac_add(&h, epoch_le, sizeof(epoch_le));
+        rh_hmac_end(&h, ack + 4u, 8u);
+        memcpy(ack, epoch_le, sizeof(epoch_le));
+        memcpy(secure->next_key, next.key, RH_SECURE_KEY_SIZE);
+        secure->next_epoch = new_epoch;
+        secure->has_next = 1u;
+    }
+    memset(&next, 0, sizeof(next));
     return ROBOHUB_OK;
 }

@@ -8,6 +8,7 @@
 #include "robohub/transport.h"
 #include "robohub/core/event.h"
 #include "core_internal.h" /* the event bus initialiser, for a test with no runtime */
+#include "keystore_double.h"
 
 #include <assert.h>
 #include <string.h>
@@ -73,6 +74,21 @@ static RoboHubError on_flagged(robohub_event_id id, const void* payload, rh_size
 {
     (void)id; (void)payload; (void)size; (void)user;
     flagged++;
+    return ROBOHUB_OK;
+}
+
+/* The board's REKEY_ACK, as the gateway's end receives it (still sealed). */
+static int acks;
+static rh_u8 ack_seen[32];
+static rh_size ack_len;
+static RoboHubError on_ack(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id; (void)user;
+    if (size <= sizeof(ack_seen)) {
+        memcpy(ack_seen, payload, size);
+        ack_len = size;
+        acks++;
+    }
     return ROBOHUB_OK;
 }
 
@@ -224,6 +240,42 @@ int main(void)
     assert(robohub_transport_send(&gateway_end, TEST_EVENT, 5u, payload, (rh_u16)sizeof(payload)) == ROBOHUB_OK);
     assert(deliveries == delivered);   /* a plain frame to an authenticated board is dropped */
     assert(board.dropped == dropped + 1u);
+
+    /* A REKEY sealed under the session is the secure layer's own: the board
+     * stores the key and answers REKEY_ACK under the same session, and neither
+     * reaches the event bus as a message of its own. */
+    keystore_double_reset();
+    assert(robohub_core_event_subscribe((robohub_event_id)(RH_SECURE_MSG_REKEY_ACK | RH_SECURE_FLAG), on_ack, 0) == ROBOHUB_OK);
+    {
+        rh_u8 material[8 + 8 + 8];
+        rh_u8 k_down[16], mask[16];
+        const rh_u8 nonce_g[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        memcpy(material, "rh-down1", 8);
+        memcpy(material + 8, hello_seen + 8, 8);
+        memcpy(material + 16, nonce_g, 8);
+        robohub_secure_hmac(k_dev, 16, material, sizeof(material), k_down, 16);
+        rh_u8 sealed[6 + RH_SECURE_REKEY_SIZE + 8];
+        sealed[0] = 0x34u; sealed[1] = 0x12u;
+        sealed[2] = 1u; sealed[3] = 0u; sealed[4] = 0u; sealed[5] = 0u;
+        rh_u8 wrap_in[8 + 6];
+        memcpy(wrap_in, "rh-wrap1", 8);
+        memcpy(wrap_in + 8, sealed, 6);
+        robohub_secure_hmac(k_dev, 16, wrap_in, sizeof(wrap_in), mask, 16);
+        sealed[6] = 3u; sealed[7] = 0u; sealed[8] = 0u; sealed[9] = 0u;
+        for (int i = 0; i < 16; i++) sealed[10 + i] = (rh_u8)(0xC0u + i) ^ mask[i];
+        rh_u8 tag_in[4 + 6 + RH_SECURE_REKEY_SIZE];
+        const rh_u16 flagged_id = (rh_u16)(RH_SECURE_MSG_REKEY | RH_SECURE_FLAG);
+        tag_in[0] = (rh_u8)flagged_id; tag_in[1] = (rh_u8)(flagged_id >> 8); tag_in[2] = 0u; tag_in[3] = 0u;
+        memcpy(tag_in + 4, sealed, 6 + RH_SECURE_REKEY_SIZE);
+        robohub_secure_hmac(k_down, 16, tag_in, sizeof(tag_in), sealed + 6 + RH_SECURE_REKEY_SIZE, 8);
+        int before = deliveries;
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)flagged_id, 0u, sealed, (rh_u16)sizeof(sealed)) == ROBOHUB_OK);
+        assert(acks == 1);
+        assert(ack_len == 6u + RH_SECURE_REKEY_ACK_SIZE + 8u);   /* sealed: sid, counter, ack, tag */
+        assert(ack_seen[6] == 3u && ack_seen[7] == 0u);          /* the new epoch */
+        assert(keystore_double_stores == 1 && keystore_double_key.epoch == 3u && keystore_double_key.key[0] == 0xC0u);
+        assert(deliveries == before);
+    }
 
     return 0;
 }

@@ -104,3 +104,31 @@ sent unauthenticated. HMAC-SHA256, truncated to 64 bits, with a counter per
 direction and a session lifetime; no encryption, no allocation. The board's id and
 device key come from its firmware build, and its nonces from
 `robohub_platform_nonce`, which every platform provides.
+
+### Key epochs and rotation
+
+A board's key can be rotated by its gateway without reflashing it. The firmware
+is built with its key and that key's epoch (`RH_DEVICE_KEY_EPOCH` in the
+`robohub_secret.h` Mesh writes) and binds them with
+`robohub_secure_init_epoch` (with its scope); `robohub_secure_init` is epoch 0
+with no scope. At init the
+platform's keystore (`robohub/keystore.h`, in robohub-common) is read, and a key
+it holds of a newer epoch is used instead — when it was stored under the build's
+key scope (`RH_KEY_SCOPE` in `robohub_secret.h`, one per gateway). A key stored
+for another gateway, by a board since moved to another mesh, is ignored. A build
+without a scope (a Linux host node, whose key is in a file) passes none, has the
+scope of eight zero bytes, and takes only keys stored that way.
+
+When the gateway sends `REKEY` (`0x0014`) sealed under the session, the
+transport hands it to `robohub_secure_rekey` and nothing above the transport
+sees it: the new key is unwrapped (it is XORed with an HMAC of the current key,
+the frame's session id and its counter), stored with `rh_keystore_store` — or
+with the instance's own store, `robohub_secure_on_store`, which a Linux host
+node uses to rewrite its key file — and answered with `REKEY_ACK` (`0x0015`),
+sealed under the same session, carrying a proof made with the new key. The
+session goes on under the old key; the next hello is under the new one. A board
+that cannot store the key answers epoch 0 and a zero proof, and keeps its key.
+The derivation, the wrap and the proof are written out in `secure.h`.
+
+Whoever holds a board's old key and recorded the `REKEY` frame can unwrap the new
+key; there is no forward secrecy.

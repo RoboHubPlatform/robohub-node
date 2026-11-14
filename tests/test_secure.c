@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "robohub/secure.h"
+#include "keystore_double.h"
 
 static int failures = 0;
 #define CHECK(cond, what) do { if (!(cond)) { fprintf(stderr, "FAIL: %s (line %d)\n", what, __LINE__); failures++; } } while (0)
@@ -120,6 +121,190 @@ static rh_size gateway_seal(gateway_side* g, rh_u16 msg_id, rh_u16 tx_id, const 
     return n + RH_SECURE_OVERHEAD;
 }
 
+/* ---- key epochs and REKEY, from the protocol ----------------------------- */
+
+static void derive_epoch_key(const rh_u8 k_gw[32], const rh_u8 uid[8], rh_u32 epoch, rh_u8 out[16])
+{
+    if (epoch == 0u) {
+        derive_device_key(k_gw, uid, out);
+        return;
+    }
+    rh_u8 e[4] = { (rh_u8)epoch, (rh_u8)(epoch >> 8), (rh_u8)(epoch >> 16), (rh_u8)(epoch >> 24) };
+    const rh_u8* parts[] = { (const rh_u8*)"rh-dev2", uid, e };
+    rh_size lens[] = { 7, 8, 4 };
+    hmac_parts(k_gw, 32, parts, lens, 3, out, 16);
+}
+
+/* The REKEY payload for the next frame the gateway seals (its counter is
+ * down_ctr + 1), wrapping `next` under the current device key. */
+static void gateway_rekey(const gateway_side* g, rh_u32 epoch, const rh_u8 next[16], rh_u8 out[20])
+{
+    rh_u32 ctr = g->down_ctr + 1u;
+    rh_u8 sc[6] = { (rh_u8)g->sid, (rh_u8)(g->sid >> 8), (rh_u8)ctr, (rh_u8)(ctr >> 8), (rh_u8)(ctr >> 16), (rh_u8)(ctr >> 24) };
+    rh_u8 mask[16];
+    const rh_u8* parts[] = { (const rh_u8*)"rh-wrap1", sc };
+    rh_size lens[] = { 8, 6 };
+    hmac_parts(g->k_dev, 16, parts, lens, 2, mask, 16);
+    out[0] = (rh_u8)epoch; out[1] = (rh_u8)(epoch >> 8); out[2] = (rh_u8)(epoch >> 16); out[3] = (rh_u8)(epoch >> 24);
+    for (int i = 0; i < 16; i++) out[4 + i] = (rh_u8)(next[i] ^ mask[i]);
+}
+
+static void rekey_proof(const rh_u8 key[16], const rh_u8 uid[8], rh_u32 epoch, rh_u8 out[8])
+{
+    rh_u8 e[4] = { (rh_u8)epoch, (rh_u8)(epoch >> 8), (rh_u8)(epoch >> 16), (rh_u8)(epoch >> 24) };
+    const rh_u8* parts[] = { (const rh_u8*)"rh-rekey-ok", uid, e };
+    rh_size lens[] = { 11, 8, 4 };
+    hmac_parts(key, 16, parts, lens, 3, out, 8);
+}
+
+static int stored_by_hook;
+static rh_u32 hook_epoch;
+static rh_u8 hook_key[16];
+static int hook_store(const rh_u8 key[16], rh_u32 epoch, void* user)
+{
+    (void)user;
+    memcpy(hook_key, key, 16);
+    hook_epoch = epoch;
+    stored_by_hook++;
+    return 0;
+}
+
+/* A board opens a session with the gateway; answers the gateway side's sid. */
+static void open_session(RoboHubSecure* board, gateway_side* g, rh_u16 sid)
+{
+    rh_u8 hello[RH_SECURE_HELLO_SIZE], session[RH_SECURE_SESSION_SIZE];
+    CHECK(robohub_secure_hello(board, hello) == ROBOHUB_OK, "rekey: hello");
+    CHECK(gateway_answer(g, hello, sid, 3600, session) == 0, "rekey: the gateway knows the hello's key");
+    CHECK(robohub_secure_accept(board, session, sizeof(session)) == ROBOHUB_OK, "rekey: session");
+}
+
+/* Seal a REKEY down and open it on the board; answers the board's ack. */
+static RoboHubError deliver_rekey(RoboHubSecure* board, gateway_side* g, rh_u32 epoch, const rh_u8 next[16],
+                                  rh_u8 ack[RH_SECURE_REKEY_ACK_SIZE])
+{
+    rh_u8 rekey[20], frame[64];
+    gateway_rekey(g, epoch, next, rekey);
+    rh_size n = gateway_seal(g, RH_SECURE_MSG_REKEY, 0, rekey, sizeof(rekey), frame);
+    const rh_u8* inner = 0; rh_size inner_len = 0;
+    if (robohub_secure_open(board, RH_SECURE_MSG_REKEY | RH_SECURE_FLAG, 0, frame, n, &inner, &inner_len) != ROBOHUB_OK) {
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+    return robohub_secure_rekey(board, inner, inner_len, ack);
+}
+
+static void check_rekey(const rh_u8 k_gw[32], const rh_u8 uid[8])
+{
+    rh_u8 k0[16], k1[16], k2[16], ack[RH_SECURE_REKEY_ACK_SIZE], proof[8];
+    derive_epoch_key(k_gw, uid, 0, k0);
+    derive_epoch_key(k_gw, uid, 1, k1);
+    derive_epoch_key(k_gw, uid, 2, k2);
+    CHECK(memcmp(k0, k1, 16) != 0 && memcmp(k1, k2, 16) != 0, "each epoch has its own key");
+
+    /* Rotation to epoch 1: stored, proven, and used from the next hello. */
+    keystore_double_reset();
+    RoboHubSecure board;
+    gateway_side g;
+    memcpy(g.k_dev, k0, 16);
+    CHECK(robohub_secure_init(&board, uid, k0, counting_nonce, clock_now) == ROBOHUB_OK, "rekey: init");
+    CHECK(board.epoch == 0u, "a board with nothing stored is at its compiled-in epoch");
+    open_session(&board, &g, 0x0101);
+    CHECK(deliver_rekey(&board, &g, 1, k1, ack) == ROBOHUB_OK, "a REKEY is accepted");
+    rekey_proof(k1, uid, 1, proof);
+    CHECK(ack[0] == 1 && ack[1] == 0 && ack[2] == 0 && ack[3] == 0, "the ack names the new epoch");
+    CHECK(memcmp(ack + 4, proof, 8) == 0, "the ack proves the board holds the new key");
+    CHECK(keystore_double_stores == 1 && keystore_double_key.epoch == 1u &&
+          memcmp(keystore_double_key.key, k1, 16) == 0, "the new key and its epoch are stored");
+    CHECK(robohub_secure_ready(&board) && board.epoch == 0u, "the current session goes on under the old key");
+    rh_u8 out[64]; rh_size out_len = 0;
+    CHECK(robohub_secure_seal(&board, 0x0204, 1, (const rh_u8*)"x", 1, out, sizeof(out), &out_len) == ROBOHUB_OK &&
+          gateway_open(&g, 0x0204 | RH_SECURE_FLAG, 1, out, out_len) == 0, "a frame after the REKEY still opens under the session");
+
+    /* The same REKEY again (the ack was lost) is answered again, not stored twice. */
+    CHECK(deliver_rekey(&board, &g, 1, k1, ack) == ROBOHUB_OK && memcmp(ack + 4, proof, 8) == 0 &&
+          keystore_double_stores == 1, "a repeated REKEY is answered again without a second write");
+
+    /* The next hello is under epoch 1: the gateway's epoch-0 key no longer opens it. */
+    rh_u8 hello[RH_SECURE_HELLO_SIZE], session[RH_SECURE_SESSION_SIZE];
+    CHECK(robohub_secure_hello(&board, hello) == ROBOHUB_OK, "rekey: the next hello");
+    CHECK(board.epoch == 1u, "the board is at epoch 1 from its next hello");
+    CHECK(gateway_answer(&g, hello, 0x0102, 3600, session) != 0, "the old key does not authenticate the next hello");
+    memcpy(g.k_dev, k1, 16);
+    CHECK(gateway_answer(&g, hello, 0x0102, 3600, session) == 0, "the epoch-1 key does");
+    CHECK(robohub_secure_accept(&board, session, sizeof(session)) == ROBOHUB_OK, "a session under epoch 1");
+
+    /* A REKEY that is not newer, or is short, or changed in transit, is refused. */
+    CHECK(deliver_rekey(&board, &g, 1, k1, ack) != ROBOHUB_OK, "a REKEY to the epoch in use is refused");
+    rh_u8 shortk[19] = { 2 };
+    CHECK(robohub_secure_rekey(&board, shortk, sizeof(shortk), ack) != ROBOHUB_OK, "a short REKEY is refused");
+    {
+        rh_u8 rekey[20], frame[64];
+        gateway_rekey(&g, 2, k2, rekey);
+        rh_size n = gateway_seal(&g, RH_SECURE_MSG_REKEY, 0, rekey, sizeof(rekey), frame);
+        frame[6 + 5] ^= 1;
+        const rh_u8* inner = 0; rh_size inner_len = 0;
+        CHECK(robohub_secure_open(&board, RH_SECURE_MSG_REKEY | RH_SECURE_FLAG, 0, frame, n, &inner, &inner_len) != ROBOHUB_OK,
+              "a REKEY changed in transit does not open");
+    }
+
+    /* After a reboot the stored key is used: epoch 1 over the compiled-in 0. */
+    RoboHubSecure rebooted;
+    CHECK(robohub_secure_init(&rebooted, uid, k0, counting_nonce, clock_now) == ROBOHUB_OK && rebooted.epoch == 1u &&
+          memcmp(rebooted.device_key, k1, 16) == 0, "after a reboot the stored, newer key is used");
+    /* A board flashed with a newer key than the stored one keeps the flashed one. */
+    CHECK(robohub_secure_init_epoch(&rebooted, uid, k2, 2, 0, counting_nonce, clock_now) == ROBOHUB_OK && rebooted.epoch == 2u &&
+          memcmp(rebooted.device_key, k2, 16) == 0, "a compiled-in key of a newer epoch wins over an older stored one");
+
+    /* Scope: a key is stored with the build's scope, and taken back only by a
+     * build of the same scope. */
+    {
+        const rh_u8 scope_a[8] = { 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8 };
+        const rh_u8 scope_b[8] = { 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8 };
+        rh_u8 zero_scope[8] = { 0 };
+        CHECK(memcmp(keystore_double_key.scope, zero_scope, 8) == 0, "a build without a scope stores the zero scope");
+        RoboHubSecure scoped;
+        CHECK(robohub_secure_init_epoch(&scoped, uid, k0, 0, scope_a, counting_nonce, clock_now) == ROBOHUB_OK &&
+              scoped.epoch == 0u && memcmp(scoped.device_key, k0, 16) == 0,
+              "a key stored without a scope is not taken by a scoped build");
+        keystore_double_reset();
+        gateway_side gs;
+        memcpy(gs.k_dev, k0, 16);
+        open_session(&scoped, &gs, 0x0105);
+        CHECK(deliver_rekey(&scoped, &gs, 1, k1, ack) == ROBOHUB_OK && keystore_double_stores == 1 &&
+              memcmp(keystore_double_key.scope, scope_a, 8) == 0, "a rotated key is stored with the build's scope");
+        RoboHubSecure same, moved, plain;
+        CHECK(robohub_secure_init_epoch(&same, uid, k0, 0, scope_a, counting_nonce, clock_now) == ROBOHUB_OK &&
+              same.epoch == 1u && memcmp(same.device_key, k1, 16) == 0, "a build of the same scope takes it back");
+        CHECK(robohub_secure_init_epoch(&moved, uid, k0, 0, scope_b, counting_nonce, clock_now) == ROBOHUB_OK &&
+              moved.epoch == 0u && memcmp(moved.device_key, k0, 16) == 0,
+              "a build for another gateway ignores it and keeps its compiled-in key");
+        CHECK(robohub_secure_init(&plain, uid, k0, counting_nonce, clock_now) == ROBOHUB_OK && plain.epoch == 0u,
+              "and so does a build without a scope");
+    }
+
+    /* A board whose platform has no store answers "cannot rotate". */
+    keystore_double_reset();
+    keystore_double_fail = 1;
+    RoboHubSecure nostore;
+    memcpy(g.k_dev, k0, 16);
+    robohub_secure_init(&nostore, uid, k0, counting_nonce, clock_now);
+    open_session(&nostore, &g, 0x0103);
+    rh_u8 zero[RH_SECURE_REKEY_ACK_SIZE] = { 0 };
+    CHECK(deliver_rekey(&nostore, &g, 1, k1, ack) == ROBOHUB_OK && memcmp(ack, zero, sizeof(zero)) == 0,
+          "with no store the ack is epoch 0 and a zero proof");
+    CHECK(robohub_secure_hello(&nostore, hello) == ROBOHUB_OK && nostore.epoch == 0u &&
+          memcmp(nostore.device_key, k0, 16) == 0, "and the board keeps its key");
+
+    /* An instance's own store (a host's key file) is used instead of the keystore. */
+    keystore_double_reset();
+    RoboHubSecure host;
+    robohub_secure_init(&host, uid, k0, counting_nonce, clock_now);
+    robohub_secure_on_store(&host, hook_store, 0);
+    open_session(&host, &g, 0x0104);
+    CHECK(deliver_rekey(&host, &g, 1, k1, ack) == ROBOHUB_OK && memcmp(ack + 4, proof, 8) == 0, "rekey with a store hook");
+    CHECK(stored_by_hook == 1 && hook_epoch == 1u && memcmp(hook_key, k1, 16) == 0 && keystore_double_stores == 0,
+          "the hook keeps the key, and the keystore is not written");
+}
+
 int main(void)
 {
     check_hmac_vectors();
@@ -197,6 +382,8 @@ int main(void)
     RoboHubSecure none;
     robohub_secure_init(&none, uid, g.k_dev, no_nonce, clock_now);
     CHECK(robohub_secure_hello(&none, hello) == ROBOHUB_ERR_NOT_SUPPORTED, "no hello without a nonce source");
+
+    check_rekey(k_gw, uid);
 
     if (failures == 0) {
         printf("test_secure: all checks passed\n");

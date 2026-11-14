@@ -184,6 +184,18 @@ static void transport_deliver(RoboHubTransport* transport)
         msg_id = (rh_u16)(msg_id & (rh_u16)~RH_SECURE_FLAG);
         payload = inner;
         length = inner_length;
+        /* A key rotation is the secure layer's own: the new key is stored and
+         * the answer goes back under the same session, and nothing above this
+         * layer sees either. */
+        if (msg_id == RH_SECURE_MSG_REKEY) {
+            rh_u8 ack[RH_SECURE_REKEY_ACK_SIZE];
+            if (robohub_secure_rekey(transport->secure, payload, length, ack) == ROBOHUB_OK) {
+                (void)robohub_transport_send(transport, RH_SECURE_MSG_REKEY_ACK, tx_id, ack,
+                                             (rh_u16)sizeof(ack));
+            }
+            transport->rx_packets++;
+            return;
+        }
     }
 
     transport->rx_packets++;

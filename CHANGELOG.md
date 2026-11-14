@@ -15,3 +15,7 @@ deployment planner intersects it with both boards' `capabilities.links`.
 ## [0.3.0] - 2026-11-14
 
 `robohub_transport_on_frame` hands every frame that checks out to a hook before the event bus, and a frame the hook takes is not published: what a relay needs to forward sealed frames it cannot open.
+
+## [0.4.0] - 2026-11-14
+
+Keys have epochs: `robohub_secure_init_epoch` takes the build's epoch and key scope, a `REKEY` from the gateway is unwrapped, stored in the platform keystore with the scope and confirmed, and the new key is used from the next hello. A stored key from another scope is ignored.

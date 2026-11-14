@@ -72,15 +72,16 @@ target_compile_features(robohub-transport PUBLIC c_std_11)
 # ---------------------------------------------------------------------------
 # Framing is ordinary portable C and runs on the machine doing the building. The
 # test drives the event bus directly, so it reaches the core's private initialiser
-# the way a runtime would.
+# the way a runtime would. Both tests link a keystore of their own
+# (tests/keystore_double.c) in place of a platform's.
 if(PROJECT_IS_TOP_LEVEL AND RHO_BUILD_HOST_TESTS AND NOT RHO_TARGET_IS_BAREMETAL)
   message(STATUS "[${PROJECT_NAME}] registering host unit tests")
   enable_testing()
-  add_executable(robohub-transport-test tests/test_transport.c)
+  add_executable(robohub-transport-test tests/test_transport.c tests/keystore_double.c)
   target_link_libraries(robohub-transport-test PRIVATE robohub-transport)
   target_include_directories(robohub-transport-test PRIVATE "${ROBOHUB_CORE_DIR}/src")
   add_test(NAME robohub-transport-test COMMAND robohub-transport-test)
-  add_executable(robohub-transport-secure-test tests/test_secure.c)
+  add_executable(robohub-transport-secure-test tests/test_secure.c tests/keystore_double.c)
   target_link_libraries(robohub-transport-secure-test PRIVATE robohub-transport)
   add_test(NAME robohub-transport-secure-test COMMAND robohub-transport-secure-test)
 endif()

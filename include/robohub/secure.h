@@ -32,6 +32,43 @@
  * and a receiver drops it unless the session is current, the counter is greater
  * than the last one accepted in that direction, and the tag matches.
  *
+ * Key epochs. A board's key can be rotated without reflashing it. Epoch 0 is the
+ * key above; epoch n >= 1 is
+ *
+ *     K_dev(n) = HMAC-SHA256(K_gw, "rh-dev2" | uid | n as u32 LE)[0:16]
+ *
+ * Nothing in the hello says which epoch a board holds: the gateway tries the one
+ * its node manifest names for the board, then the one before it while the board
+ * has not confirmed the new one. When a board opens a session under an older
+ * epoch than the manifest's, the gateway sends, sealed under that session,
+ *
+ *     REKEY      new_epoch(4) | wrapped(16)
+ *                wrapped = K_dev(new) XOR HMAC-SHA256(K_dev, "rh-wrap1" | sid | ctr)[0:16]
+ *
+ * with sid and ctr the REKEY frame's own session id and counter. The board
+ * unwraps the key, stores it (robohub/keystore.h, or the instance's own store
+ * hook), and answers, sealed under the same session,
+ *
+ *     REKEY_ACK  new_epoch(4) | proof(8)
+ *                proof = HMAC-SHA256(K_dev(new), "rh-rekey-ok" | uid | new_epoch)[0:8]
+ *
+ * It keeps its current key for the rest of the session and says its next hello
+ * with the new one. A board that cannot store the key answers epoch 0 and a zero
+ * proof, which the gateway reports as "cannot rotate". At init the stored key is
+ * used instead of the compiled-in one when its epoch is newer and its scope is
+ * the build's.
+ *
+ * Scope. A stored key is kept with the build's key scope (RH_KEY_SCOPE in the
+ * robohub_secret.h Mesh writes: HMAC-SHA256(K_gw, "rh-scope1")[0:8], the same
+ * for every board of one gateway). A key stored under another scope — a board
+ * moved to another mesh and flashed for it — is ignored, and the compiled-in key
+ * is used. A build without a scope (a Linux host node, whose key comes from a
+ * file) has the scope of eight zero bytes, and takes only keys stored with it.
+ *
+ * Whoever holds a board's old key and recorded the REKEY frame can unwrap the new
+ * key: rotation ends the use of a key that leaks later, not of one that was
+ * already stolen while the attacker listened (there is no forward secrecy).
+ *
  * Nothing here allocates; every buffer is the caller's or the instance's.
  *
  * @project RoboHub Platform
@@ -54,6 +91,9 @@ extern "C" {
 /** The message ids of the handshake. */
 #define RH_SECURE_MSG_HELLO   0x0011u
 #define RH_SECURE_MSG_SESSION 0x0012u
+/** Key rotation; both are only ever sent sealed (robohub/protocol MessageId). */
+#define RH_SECURE_MSG_REKEY     0x0014u
+#define RH_SECURE_MSG_REKEY_ACK 0x0015u
 
 /** A secured frame's message id has this bit set. */
 #define RH_SECURE_FLAG 0x8000u
@@ -61,11 +101,14 @@ extern "C" {
 #define RH_SECURE_UID_SIZE   8u
 #define RH_SECURE_KEY_SIZE   16u
 #define RH_SECURE_NONCE_SIZE 8u
+#define RH_SECURE_SCOPE_SIZE 8u
 #define RH_SECURE_TAG_SIZE   8u
 #define RH_SECURE_HELLO_SIZE   (RH_SECURE_UID_SIZE + RH_SECURE_NONCE_SIZE + RH_SECURE_TAG_SIZE)
 #define RH_SECURE_SESSION_SIZE (RH_SECURE_UID_SIZE + 2u + RH_SECURE_NONCE_SIZE + 2u + RH_SECURE_TAG_SIZE)
 /** What a secured frame adds to a payload: sid, counter and tag. */
 #define RH_SECURE_OVERHEAD (2u + 4u + RH_SECURE_TAG_SIZE)
+#define RH_SECURE_REKEY_SIZE     (4u + RH_SECURE_KEY_SIZE)
+#define RH_SECURE_REKEY_ACK_SIZE (4u + 8u)
 
 /**
  * @brief A source of nonces: unique per call for the life of the device.
@@ -78,6 +121,13 @@ typedef int (*RoboHubSecureNonce)(rh_u8* out, rh_size length);
 
 /** Milliseconds since boot, for a session's lifetime. */
 typedef rh_u32 (*RoboHubSecureClock)(void);
+
+/**
+ * @brief Where a rotated key is kept, when an instance keeps it somewhere of its
+ * own rather than in the platform's keystore (a Linux host node rewrites its key
+ * file). Returns 0 when the key and its epoch are stored durably.
+ */
+typedef int (*RoboHubSecureStore)(const rh_u8 key[RH_SECURE_KEY_SIZE], rh_u32 epoch, void* user);
 
 typedef enum {
     RH_SECURE_NONE = 0,
@@ -101,6 +151,17 @@ typedef struct RoboHubSecure {
     RoboHubSecureClock now_ms;
     /** Frames refused for a stale session, a replayed counter or a bad tag. */
     rh_u32 rejected;
+    /** The epoch of device_key. */
+    rh_u32 epoch;
+    /** The build's key scope, stored with a rotated key; zeros when it has none. */
+    rh_u8  scope[RH_SECURE_SCOPE_SIZE];
+    /** A key a REKEY gave and the store kept, used from the next hello on. */
+    rh_u8  next_key[RH_SECURE_KEY_SIZE];
+    rh_u32 next_epoch;
+    rh_u8  has_next;
+    /** The instance's own store for a rotated key, or 0 for rh_keystore_store. */
+    RoboHubSecureStore store;
+    void*  store_user;
 } RoboHubSecure;
 
 /** Bind a board's id and device key, and how it gets nonces and the time. */
@@ -109,6 +170,37 @@ RoboHubError robohub_secure_init(RoboHubSecure* secure,
                                  const rh_u8 device_key[RH_SECURE_KEY_SIZE],
                                  RoboHubSecureNonce nonce,
                                  RoboHubSecureClock now_ms);
+
+/**
+ * @brief Bind a board's id and the device key it was built with, of epoch
+ * `epoch` (RH_DEVICE_KEY_EPOCH in robohub_secret.h), and the build's key scope
+ * (RH_KEY_SCOPE, or 0 for a build without one). The platform's keystore is read,
+ * and a key it holds of a newer epoch under the same scope is used instead.
+ */
+RoboHubError robohub_secure_init_epoch(RoboHubSecure* secure,
+                                       const rh_u8 uid[RH_SECURE_UID_SIZE],
+                                       const rh_u8 device_key[RH_SECURE_KEY_SIZE],
+                                       rh_u32 epoch,
+                                       const rh_u8* scope,
+                                       RoboHubSecureNonce nonce,
+                                       RoboHubSecureClock now_ms);
+
+/**
+ * @brief Keep a rotated key with `store` instead of the platform's keystore.
+ * Set it after init; 0 goes back to the keystore.
+ */
+RoboHubError robohub_secure_on_store(RoboHubSecure* secure, RoboHubSecureStore store, void* user);
+
+/**
+ * @brief Act on a REKEY payload that robohub_secure_open has just opened (its
+ * session id and counter are the ones the key was wrapped with), and write the
+ * REKEY_ACK payload to send back sealed under the same session. The ack says
+ * "cannot rotate" (epoch 0, a zero proof) when the key could not be stored; the
+ * call still succeeds then, since the answer must be sent. A REKEY for an epoch
+ * not newer than the key in use is refused.
+ */
+RoboHubError robohub_secure_rekey(RoboHubSecure* secure, const rh_u8* payload, rh_size length,
+                                  rh_u8 ack[RH_SECURE_REKEY_ACK_SIZE]);
 
 /** Whether frames can be sealed: a session is established and has not expired. */
 int robohub_secure_ready(const RoboHubSecure* secure);
