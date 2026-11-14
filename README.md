@@ -132,3 +132,7 @@ The derivation, the wrap and the proof are written out in `secure.h`.
 
 Whoever holds a board's old key and recorded the `REKEY` frame can unwrap the new
 key; there is no forward secrecy.
+
+A `SESSION_RESET` (`0x0016`) that opens under the current session drops it, and
+the transport says a hello at once: a gateway that restarted asks this rather
+than leave a board unheard until its counter passes the mark it restored.

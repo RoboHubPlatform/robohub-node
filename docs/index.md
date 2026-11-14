@@ -116,6 +116,14 @@ The derivation, the wrap and the proof are written out in `secure.h`.
 Whoever holds a board's old key and recorded the `REKEY` frame can unwrap the new
 key; there is no forward secrecy.
 
+When the gateway sends `SESSION_RESET` (`0x0016`) and it opens under the current
+session — its `K_down`, a counter greater than the last accepted — the transport
+drops the session (`robohub_secure_reset`) and says a hello at once; nothing above
+the transport sees it. A gateway sends it after a restart, for a session it took
+back from disk: it can only place that session's upward counter past a margin,
+and a board still counting below it would go unheard until it passed it.
+Unsealed, or under any other session, the frame is refused like any other.
+
 ## Taking a frame before the bus
 
 `robohub_transport_on_frame(&link, hook, user)` hands every frame that checks out

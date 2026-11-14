@@ -19,3 +19,5 @@ deployment planner intersects it with both boards' `capabilities.links`.
 ## [0.4.0] - 2026-11-14
 
 Keys have epochs: `robohub_secure_init_epoch` takes the build's epoch and key scope, a `REKEY` from the gateway is unwrapped, stored in the platform keystore with the scope and confirmed, and the new key is used from the next hello. A stored key from another scope is ignored.
+
+A sealed `SESSION_RESET` under the current session drops it and sends a new HELLO at once.

@@ -358,6 +358,25 @@ int main(void)
     frame[n - 1] ^= 0x80;
     CHECK(robohub_secure_open(&board, 0x0301 | RH_SECURE_FLAG, 10, frame, n, &inner, &inner_len) != ROBOHUB_OK, "a changed tag");
 
+    /* A reset drops the session: nothing is sealed or opened under it after,
+     * its keys are gone, and a session answers only the next hello. */
+    {
+        RoboHubSecure copy = board;
+        CHECK(robohub_secure_reset(&copy) == ROBOHUB_OK, "a reset");
+        CHECK(!robohub_secure_ready(&copy) && copy.state == RH_SECURE_NONE, "no session after a reset");
+        rh_u8 zero[RH_SECURE_KEY_SIZE] = { 0 };
+        CHECK(memcmp(copy.key_rx, zero, sizeof(zero)) == 0 && memcmp(copy.key_tx, zero, sizeof(zero)) == 0,
+              "the session's keys are wiped");
+        CHECK(robohub_secure_seal(&copy, 0x0204, 1, reading, sizeof(reading), out, sizeof(out), &out_len) == ROBOHUB_ERR_STATE,
+              "nothing is sealed after a reset");
+        n = gateway_seal(&g, 0x0301, 11, command, sizeof(command), frame);
+        CHECK(robohub_secure_open(&copy, 0x0301 | RH_SECURE_FLAG, 11, frame, n, &inner, &inner_len) != ROBOHUB_OK,
+              "nothing opens after a reset");
+        CHECK(robohub_secure_accept(&copy, session, sizeof(session)) != ROBOHUB_OK,
+              "an old session is not taken back after a reset");
+        CHECK(robohub_secure_reset(0) == ROBOHUB_ERR_INVALID_ARG, "a reset of nothing");
+    }
+
     /* A session answering an earlier hello is not accepted after a new one. */
     CHECK(robohub_secure_hello(&board, hello) == ROBOHUB_OK, "a new hello");
     rh_u8 stale[RH_SECURE_SESSION_SIZE];

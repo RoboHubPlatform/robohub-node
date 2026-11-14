@@ -130,6 +130,32 @@ static void answer_hello(const rh_u8 k_dev[16], const rh_u8 hello[RH_SECURE_HELL
     robohub_secure_hmac(k_dev, 16, material, sizeof(material), session + 20, 8);
 }
 
+/* A frame the gateway seals for the board: sid, counter, payload and a tag
+ * under k_down. Returns the sealed length. */
+static rh_size seal_down(const rh_u8 k_down[16], rh_u16 flagged_id, rh_u16 sid, rh_u32 counter,
+                         const rh_u8* payload, rh_size length, rh_u8* out)
+{
+    out[0] = (rh_u8)sid; out[1] = (rh_u8)(sid >> 8);
+    out[2] = (rh_u8)counter; out[3] = (rh_u8)(counter >> 8);
+    out[4] = (rh_u8)(counter >> 16); out[5] = (rh_u8)(counter >> 24);
+    if (length > 0u) {
+        memcpy(out + 6, payload, length);
+    }
+    rh_u8 tag_in[4 + 6 + 16];
+    tag_in[0] = (rh_u8)flagged_id; tag_in[1] = (rh_u8)(flagged_id >> 8); tag_in[2] = 0u; tag_in[3] = 0u;
+    memcpy(tag_in + 4, out, 6 + length);
+    robohub_secure_hmac(k_down, 16, tag_in, 4 + 6 + length, out + 6 + length, 8);
+    return 6u + length + 8u;
+}
+
+static int resets_seen;
+static RoboHubError on_reset(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id; (void)payload; (void)size; (void)user;
+    resets_seen++;
+    return ROBOHUB_OK;
+}
+
 int main(void)
 {
     assert(robohub_core_event_init() == ROBOHUB_OK);
@@ -275,6 +301,79 @@ int main(void)
         assert(ack_seen[6] == 3u && ack_seen[7] == 0u);          /* the new epoch */
         assert(keystore_double_stores == 1 && keystore_double_key.epoch == 3u && keystore_double_key.key[0] == 0xC0u);
         assert(deliveries == before);
+    }
+
+    /* A SESSION_RESET is taken only sealed under the current session, with a
+     * counter past the last accepted: then the session is dropped and a hello
+     * said at once, and nothing above the secure layer sees it. */
+    assert(robohub_core_event_subscribe((robohub_event_id)RH_SECURE_MSG_SESSION_RESET, on_reset, 0) == ROBOHUB_OK);
+    assert(robohub_core_event_subscribe((robohub_event_id)(RH_SECURE_MSG_SESSION_RESET | RH_SECURE_FLAG), on_reset, 0) == ROBOHUB_OK);
+    {
+        rh_u8 material[8 + 8 + 8];
+        rh_u8 k_down[16];
+        const rh_u8 nonce_g[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        memcpy(material, "rh-down1", 8);
+        memcpy(material + 8, hello_seen + 8, 8);
+        memcpy(material + 16, nonce_g, 8);
+        robohub_secure_hmac(k_dev, 16, material, sizeof(material), k_down, 16);
+        const rh_u16 reset_id = (rh_u16)(RH_SECURE_MSG_SESSION_RESET | RH_SECURE_FLAG);
+        const rh_u8 reason = 1u;
+        rh_u8 sealed[6 + 1 + 8];
+        rh_size n;
+        int hellos_before = hellos;
+
+        /* Unsealed: dropped, the session stands. */
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)RH_SECURE_MSG_SESSION_RESET, 0u, &reason, 1u) == ROBOHUB_OK);
+        assert(robohub_secure_ready(&secure) && hellos == hellos_before);
+        /* Under another session id. */
+        n = seal_down(k_down, reset_id, 0x9999u, 2u, &reason, 1u, sealed);
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)reset_id, 0u, sealed, (rh_u16)n) == ROBOHUB_OK);
+        assert(robohub_secure_ready(&secure) && hellos == hellos_before);
+        /* Under another key (the upward one). */
+        rh_u8 k_wrong[16];
+        memcpy(k_wrong, k_down, 16);
+        k_wrong[0] ^= 0x01u;
+        n = seal_down(k_wrong, reset_id, 0x1234u, 2u, &reason, 1u, sealed);
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)reset_id, 0u, sealed, (rh_u16)n) == ROBOHUB_OK);
+        assert(robohub_secure_ready(&secure) && hellos == hellos_before);
+        /* A counter already used (the REKEY's): a replay. */
+        n = seal_down(k_down, reset_id, 0x1234u, 1u, &reason, 1u, sealed);
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)reset_id, 0u, sealed, (rh_u16)n) == ROBOHUB_OK);
+        assert(robohub_secure_ready(&secure) && hellos == hellos_before);
+        assert(resets_seen == 0);
+
+        /* The real one, empty payload or a reason byte alike. */
+        n = seal_down(k_down, reset_id, 0x1234u, 5u, &reason, 1u, sealed);
+        int before = deliveries;
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)reset_id, 0u, sealed, (rh_u16)n) == ROBOHUB_OK);
+        assert(!robohub_secure_ready(&secure));
+        assert(secure.state == RH_SECURE_HELLO_SENT);
+        assert(hellos == hellos_before + 1);          /* the hello went out at once */
+        assert(resets_seen == 0 && deliveries == before);
+        /* The REKEY's key, stored before the reset, is the one the hello is under. */
+        assert(secure.epoch == 3u && secure.device_key[0] == 0xC0u);
+
+        /* The same reset again opens under no session. */
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)reset_id, 0u, sealed, (rh_u16)n) == ROBOHUB_OK);
+        assert(hellos == hellos_before + 1);
+        /* A reading waits for the new session, and does not repeat the hello at once. */
+        assert(robohub_transport_send(&board, TEST_EVENT, 6u, payload, (rh_u16)sizeof(payload)) == ROBOHUB_ERR_STATE);
+        assert(hellos == hellos_before + 1);
+
+        rh_u8 next_session[RH_SECURE_SESSION_SIZE];
+        answer_hello(secure.device_key, hello_seen, next_session);
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)RH_SECURE_MSG_SESSION, 0u, next_session,
+                                      (rh_u16)sizeof(next_session)) == ROBOHUB_OK);
+        assert(robohub_secure_ready(&secure) && secure.tx_counter == 0u && secure.rx_counter == 0u);
+        int flagged_before = flagged;
+        assert(robohub_transport_send(&board, TEST_EVENT, 7u, payload, (rh_u16)sizeof(payload)) == ROBOHUB_OK);
+        assert(flagged == flagged_before + 1);
+
+        /* The old session's reset, replayed under the new session's id, does not
+         * open: the new session has new keys. */
+        n = seal_down(k_down, reset_id, 0x1234u, 6u, 0, 0u, sealed);
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)reset_id, 0u, sealed, (rh_u16)n) == ROBOHUB_OK);
+        assert(robohub_secure_ready(&secure));
     }
 
     return 0;

@@ -65,6 +65,17 @@
  * is used. A build without a scope (a Linux host node, whose key comes from a
  * file) has the scope of eight zero bytes, and takes only keys stored with it.
  *
+ * Session reset. A gateway that restarts restores the sessions it kept, but
+ * places each one's upward counter past a margin, so that nothing recorded
+ * before the restart can be replayed after it; a board still counting below
+ * that mark would go unheard. The gateway asks it, sealed under that session,
+ *
+ *     SESSION_RESET  [reason(1)]       1 = the gateway restarted
+ *
+ * and a board that opens it under its current session — K_down, a counter
+ * greater than the last accepted — drops the session and says hello again at
+ * once. Unsealed, or under any other session, it is refused like any frame.
+ *
  * Whoever holds a board's old key and recorded the REKEY frame can unwrap the new
  * key: rotation ends the use of a key that leaks later, not of one that was
  * already stolen while the attacker listened (there is no forward secrecy).
@@ -94,6 +105,8 @@ extern "C" {
 /** Key rotation; both are only ever sent sealed (robohub/protocol MessageId). */
 #define RH_SECURE_MSG_REKEY     0x0014u
 #define RH_SECURE_MSG_REKEY_ACK 0x0015u
+/** The gateway asks for a new session; only ever sent sealed, gateway to board. */
+#define RH_SECURE_MSG_SESSION_RESET 0x0016u
 
 /** A secured frame's message id has this bit set. */
 #define RH_SECURE_FLAG 0x8000u
@@ -201,6 +214,13 @@ RoboHubError robohub_secure_on_store(RoboHubSecure* secure, RoboHubSecureStore s
  */
 RoboHubError robohub_secure_rekey(RoboHubSecure* secure, const rh_u8* payload, rh_size length,
                                   rh_u8 ack[RH_SECURE_REKEY_ACK_SIZE]);
+
+/**
+ * @brief Drop the session, after robohub_secure_open has just opened a
+ * SESSION_RESET under it: the state goes back to needing a hello and the
+ * session's keys are wiped. A key a REKEY gave is kept for that hello.
+ */
+RoboHubError robohub_secure_reset(RoboHubSecure* secure);
 
 /** Whether frames can be sealed: a session is established and has not expired. */
 int robohub_secure_ready(const RoboHubSecure* secure);

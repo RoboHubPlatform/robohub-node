@@ -268,6 +268,21 @@ RoboHubError robohub_secure_on_store(RoboHubSecure* secure, RoboHubSecureStore s
     return ROBOHUB_OK;
 }
 
+RoboHubError robohub_secure_reset(RoboHubSecure* secure)
+{
+    if (secure == 0) {
+        return ROBOHUB_ERR_INVALID_ARG;
+    }
+    memset(secure->key_tx, 0, RH_SECURE_KEY_SIZE);
+    memset(secure->key_rx, 0, RH_SECURE_KEY_SIZE);
+    secure->session_id = 0u;
+    secure->tx_counter = 0u;
+    secure->rx_counter = 0u;
+    secure->expires_ms = 0u;
+    secure->state = RH_SECURE_NONE;
+    return ROBOHUB_OK;
+}
+
 int robohub_secure_ready(const RoboHubSecure* secure)
 {
     if (secure == 0 || secure->state != RH_SECURE_ESTABLISHED) {

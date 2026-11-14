@@ -135,6 +135,10 @@ RoboHubError robohub_transport_init(RoboHubTransport* transport,
     return ROBOHUB_OK;
 }
 
+/* transport_hello says a HELLO, unless one is waiting for its answer and was
+ * said less than RH_TRANSPORT_HELLO_RETRY_MS ago. */
+static void transport_hello(RoboHubTransport* transport);
+
 /* A frame that just finished is decoded, checked and, if it passes, published.
  * Anything wrong with it is counted and dropped: a stream has no way to ask for
  * the bytes again, and a half-frame is not worth keeping. */
@@ -194,6 +198,16 @@ static void transport_deliver(RoboHubTransport* transport)
                                              (rh_u16)sizeof(ack));
             }
             transport->rx_packets++;
+            return;
+        }
+        /* The gateway asks for a new session — it restarted, and this one's
+         * counter is below the mark it restored. It opened under the current
+         * session, so it is the gateway's: the session is dropped and a hello
+         * said now, so the next reading already has a session to go under. */
+        if (msg_id == RH_SECURE_MSG_SESSION_RESET) {
+            (void)robohub_secure_reset(transport->secure);
+            transport->rx_packets++;
+            transport_hello(transport);
             return;
         }
     }
@@ -280,15 +294,7 @@ RoboHubError robohub_transport_send(RoboHubTransport* transport,
         return transport_write(transport, (rh_u16)msg_id, tx_id, payload, payload_len);
     }
     if (!robohub_secure_ready(secure)) {
-        rh_u32 now = secure->now_ms();
-        if (secure->state != RH_SECURE_HELLO_SENT ||
-            (rh_u32)(now - transport->hello_ms) >= RH_TRANSPORT_HELLO_RETRY_MS) {
-            rh_u8 hello[RH_SECURE_HELLO_SIZE];
-            if (robohub_secure_hello(secure, hello) == ROBOHUB_OK) {
-                transport->hello_ms = now;
-                (void)transport_write(transport, RH_SECURE_MSG_HELLO, 0u, hello, RH_SECURE_HELLO_SIZE);
-            }
-        }
+        transport_hello(transport);
         return ROBOHUB_ERR_STATE;
     }
     rh_u8 sealed[RH_TRANSPORT_MAX_FRAME_SIZE];
@@ -302,6 +308,20 @@ RoboHubError robohub_transport_send(RoboHubTransport* transport,
     }
     return transport_write(transport, (rh_u16)(msg_id | RH_SECURE_FLAG), tx_id, sealed,
                            (rh_u16)sealed_length);
+}
+
+static void transport_hello(RoboHubTransport* transport)
+{
+    RoboHubSecure* secure = transport->secure;
+    rh_u32 now = secure->now_ms();
+    if (secure->state != RH_SECURE_HELLO_SENT ||
+        (rh_u32)(now - transport->hello_ms) >= RH_TRANSPORT_HELLO_RETRY_MS) {
+        rh_u8 hello[RH_SECURE_HELLO_SIZE];
+        if (robohub_secure_hello(secure, hello) == ROBOHUB_OK) {
+            transport->hello_ms = now;
+            (void)transport_write(transport, RH_SECURE_MSG_HELLO, 0u, hello, RH_SECURE_HELLO_SIZE);
+        }
+    }
 }
 
 static RoboHubError transport_write(RoboHubTransport* transport, rh_u16 msg_id, rh_u16 tx_id,
