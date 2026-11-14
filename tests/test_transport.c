@@ -76,6 +76,23 @@ static RoboHubError on_flagged(robohub_event_id id, const void* payload, rh_size
     return ROBOHUB_OK;
 }
 
+/* A relay's hook: it takes a frame whole, the sealed id included. */
+static int hooked;
+static rh_u16 hooked_id;
+static rh_u16 hooked_tx;
+static rh_size hooked_len;
+static int take_frames;
+static int on_frame(rh_u16 msg_id, rh_u16 tx_id, const rh_u8* payload, rh_size length, void* user)
+{
+    (void)payload;
+    assert(user == &hooked);
+    hooked++;
+    hooked_id = msg_id;
+    hooked_tx = tx_id;
+    hooked_len = length;
+    return take_frames;
+}
+
 static rh_u32 now_ms_value = 5000u;
 static rh_u32 test_now(void) { return now_ms_value; }
 static int test_nonce(rh_u8* out, rh_size n) { for (rh_size i = 0; i < n; i++) out[i] = (rh_u8)(0x30u + i); return 0; }
@@ -145,6 +162,27 @@ int main(void)
     memset(noise, 0x5Au, sizeof(noise));
     robohub_transport_feed(&receiver, noise, sizeof(noise));
     assert(receiver.dropped >= 1u);
+
+    /* A hook sees every frame that checks out before the bus does. One that
+     * takes it keeps it off the bus, a sealed id as it came; one that leaves it
+     * lets it through; a frame that does not check out never reaches it. */
+    robohub_transport_feed_byte(&receiver, RH_TRANSPORT_DELIMITER); /* the noise's tail ends here */
+    assert(robohub_transport_on_frame(&receiver, on_frame, &hooked) == ROBOHUB_OK);
+    take_frames = 1;
+    before = deliveries;
+    assert(robohub_transport_send(&sender, (robohub_event_id)(TEST_EVENT | RH_SECURE_FLAG), 9u, payload,
+                                  (rh_u16)sizeof(payload)) == ROBOHUB_OK);
+    assert(hooked == 1 && hooked_id == (rh_u16)(TEST_EVENT | RH_SECURE_FLAG) && hooked_tx == 9u);
+    assert(hooked_len == sizeof(payload));
+    assert(deliveries == before);
+    take_frames = 0;
+    assert(robohub_transport_send(&sender, TEST_EVENT, 10u, payload, (rh_u16)sizeof(payload)) == ROBOHUB_OK);
+    assert(hooked == 2 && deliveries == before + 1);
+    robohub_transport_feed(&receiver, captured, captured_len); /* still the damaged frame */
+    assert(hooked == 2);
+    assert(robohub_transport_on_frame(&receiver, 0, 0) == ROBOHUB_OK);
+    assert(robohub_transport_send(&sender, TEST_EVENT, 11u, payload, (rh_u16)sizeof(payload)) == ROBOHUB_OK);
+    assert(hooked == 2 && deliveries == before + 2);
 
     /* An authenticated link sends nothing unauthenticated: the first send says
      * hello instead, a reading follows only once the session is up, it leaves

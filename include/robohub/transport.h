@@ -83,6 +83,20 @@ typedef struct RoboHubTransportPhy {
     void* context;
 } RoboHubTransportPhy;
 
+/**
+ * @brief Who takes a frame instead of the event bus.
+ *
+ * Called with every frame that checks out — on an authenticated link, after it
+ * opened, with the inner message — before it would be published. Returning
+ * non-zero takes the frame: it is not published. A relay sets one on the link
+ * its boards are on, because what it does with a board's frame is carry it
+ * whole (its id, its transaction and its payload, sealed or not) rather than
+ * act on it, and a sealed id is not one the bus has a subscriber for.
+ */
+typedef int (*RoboHubTransportFrameHook)(rh_u16 msg_id, rh_u16 tx_id,
+                                         const rh_u8* payload, rh_size length,
+                                         void* user);
+
 /* -------------------------------------------------------------------------- */
 /*  Transport instance                                                        */
 /* -------------------------------------------------------------------------- */
@@ -114,6 +128,9 @@ typedef struct RoboHubTransport {
     RoboHubSecure* secure;
     /** When the last HELLO was sent, so an unanswered one is sent again. */
     rh_u32  hello_ms;
+    /** Who takes a frame before the bus does (robohub_transport_on_frame). */
+    RoboHubTransportFrameHook on_frame;
+    void*   on_frame_user;
 } RoboHubTransport;
 
 /* -------------------------------------------------------------------------- */
@@ -130,6 +147,13 @@ RoboHubError robohub_transport_init(RoboHubTransport* transport,
  * session handshake. `secure` must outlive the transport.
  */
 RoboHubError robohub_transport_secure(RoboHubTransport* transport, RoboHubSecure* secure);
+
+/**
+ * @brief Hand every frame that checks out to `hook` before the bus: a frame the
+ * hook takes (returns non-zero for) is not published. NULL removes it.
+ */
+RoboHubError robohub_transport_on_frame(RoboHubTransport* transport,
+                                        RoboHubTransportFrameHook hook, void* user);
 
 /**
  * @brief Offer one byte from the link to the parser.

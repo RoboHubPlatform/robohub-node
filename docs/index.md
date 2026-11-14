@@ -88,6 +88,15 @@ direction and a session lifetime; no encryption, no allocation. The board's id a
 device key come from its firmware build, and its nonces from
 `robohub_platform_nonce`, which every platform provides.
 
+## Taking a frame before the bus
+
+`robohub_transport_on_frame(&link, hook, user)` hands every frame that checks out
+— on an authenticated link, after it opened — to `hook` before it is published;
+a frame the hook takes (returns non-zero for) is not published. A relay sets one
+on the link its boards are on: what it does with a board's frame is carry it
+whole — its id, sealed or not, its transaction and its payload — inside a
+`RELAYED` message to its parent, rather than act on it.
+
 ## Network transports
 
 The capability list includes `http` and `mqtt`. A board whose platform supplies

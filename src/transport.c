@@ -187,6 +187,10 @@ static void transport_deliver(RoboHubTransport* transport)
     }
 
     transport->rx_packets++;
+    if (transport->on_frame != 0 &&
+        transport->on_frame(msg_id, tx_id, payload, length, transport->on_frame_user) != 0) {
+        return;
+    }
     (void)robohub_core_event_publish_with_tx((robohub_event_id)msg_id, tx_id,
                                              payload, (rh_u16)length);
 }
@@ -228,6 +232,17 @@ RoboHubError robohub_transport_secure(RoboHubTransport* transport, RoboHubSecure
         return ROBOHUB_ERR_INVALID_ARG;
     }
     transport->secure = secure;
+    return ROBOHUB_OK;
+}
+
+RoboHubError robohub_transport_on_frame(RoboHubTransport* transport,
+                                        RoboHubTransportFrameHook hook, void* user)
+{
+    if (transport == 0) {
+        return ROBOHUB_ERR_INVALID_ARG;
+    }
+    transport->on_frame = hook;
+    transport->on_frame_user = user;
     return ROBOHUB_OK;
 }
 

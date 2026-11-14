@@ -77,6 +77,15 @@ planner change.
 It is a native module: `rho build` adds it as a dependency, and it builds on its
 own with CMake for the host tests.
 
+## Taking a frame before the bus
+
+`robohub_transport_on_frame(&link, hook, user)` hands every frame that checks out
+— on an authenticated link, after it opened — to `hook` before it is published;
+a frame the hook takes (returns non-zero for) is not published. A relay sets one
+on the link its boards are on: what it does with a board's frame is carry it
+whole — its id, sealed or not, its transaction and its payload — inside a
+`RELAYED` message to its parent, rather than act on it.
+
 ## License
 
 MIT. See `LICENSE`.
