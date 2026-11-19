@@ -19,6 +19,7 @@
 static const robohub_core_app* apps[RH_CORE_MAX_APPS];
 static rh_u32 app_count;
 
+// @req CORE-0007
 RoboHubError robohub_core_app_register(const robohub_core_app* app)
 {
     if (app == 0 || app->name == 0) {
@@ -44,6 +45,7 @@ void robohub_core_app_reset(void)
     app_count = 0u;
 }
 
+// @req CORE-0007
 RoboHubError robohub_core_app_init(void)
 {
     for (rh_u32 i = 0; i < app_count; i++) {
@@ -58,6 +60,7 @@ RoboHubError robohub_core_app_init(void)
     return ROBOHUB_OK;
 }
 
+// @req CORE-0007
 RoboHubError robohub_core_app_start(void)
 {
     for (rh_u32 i = 0; i < app_count; i++) {
@@ -83,6 +86,7 @@ void robohub_core_app_step(rh_u32 now_ms)
     }
 }
 
+// @req CORE-0007
 void robohub_core_app_stop(void)
 {
     for (rh_u32 i = app_count; i > 0u; i--) {
@@ -114,6 +118,7 @@ static void loop_thread(void* arg)
     (void)robohub_core_event_publish(RH_EVENT_CORE_STOP, 0, 0);
 }
 
+// @req CORE-0009
 RoboHubError robohub_core_app_start_thread(void)
 {
     robohub_osal_thread_config config = {

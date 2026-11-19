@@ -59,6 +59,7 @@ void robohub_core_scheduler_reset(void)
     next_id = 1u;
 }
 
+// @req CORE-0005
 RoboHubError robohub_core_task_add(const char* name,
                                    robohub_core_task_fn fn,
                                    void* user,
@@ -128,6 +129,7 @@ rh_u32 robohub_core_task_count(void)
     return count;
 }
 
+// @req CORE-0005
 void robohub_core_scheduler_run(rh_u32 now_ms)
 {
     robohub_core_diagnostics* diag = robohub_core_diag_state();
@@ -155,6 +157,7 @@ void robohub_core_scheduler_run(rh_u32 now_ms)
     }
 }
 
+// @req CORE-0005, CORE-0008
 rh_u32 robohub_core_scheduler_next_due(rh_u32 now_ms)
 {
     rh_u32 best = RH_CORE_NO_DUE;
@@ -199,6 +202,7 @@ static void task_thread(void* arg)
     }
 }
 
+// @req CORE-0009
 RoboHubError robohub_core_scheduler_start_threads(void)
 {
     for (rh_u32 i = 0; i < RH_CORE_MAX_TASKS; i++) {

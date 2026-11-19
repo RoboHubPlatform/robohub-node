@@ -31,6 +31,7 @@ static RoboHubTimer* osal_timer(void)
     return robohub_get_timer(RH_CORE_TIMER_NAME);
 }
 
+// @req CORE-0009
 RH_OSAL_WEAK rh_bool robohub_osal_rtos_present(void)
 {
     return RH_FALSE;
@@ -42,6 +43,7 @@ RH_OSAL_WEAK void robohub_osal_start(void)
      * has. The runtime relies on this returning, and then runs its own loop. */
 }
 
+// @req CORE-0009
 RH_OSAL_WEAK int robohub_osal_thread_create(robohub_thread_t* thread,
                                             const robohub_osal_thread_config* config)
 {

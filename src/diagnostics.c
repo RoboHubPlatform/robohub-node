@@ -24,6 +24,7 @@ void robohub_core_diagnostics_get(robohub_core_diagnostics* out)
     *out = counters;
 }
 
+// @req CORE-0011
 void robohub_core_diagnostics_reset(void)
 {
     counters.events_published = 0u;
@@ -50,6 +51,7 @@ static void record(rh_u32 probe, rh_bool passed, rh_u32* ok, rh_u32* fault)
     }
 }
 
+// @req CORE-0010
 RoboHubError robohub_core_smoke(RoboHubTimer* timer, rh_u32 mask, rh_u32* probe_ok, rh_u32* probe_fault)
 {
     if (probe_ok == 0 || probe_fault == 0) {

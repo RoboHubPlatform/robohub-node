@@ -19,6 +19,7 @@ static RoboHubError tick(robohub_core_task_id id, void* user)
     return ROBOHUB_OK;
 }
 
+// @verifies CORE-0005
 int main(void)
 {
     assert(robohub_core_scheduler_init() == ROBOHUB_OK);

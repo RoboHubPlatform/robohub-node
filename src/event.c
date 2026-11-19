@@ -60,6 +60,7 @@ static rh_bool same(const subscription* slot,
            slot->user == user;
 }
 
+// @req CORE-0002
 RoboHubError robohub_core_event_subscribe(robohub_event_id id,
                                           robohub_core_event_handler handler,
                                           void* user)
@@ -93,6 +94,7 @@ RoboHubError robohub_core_event_subscribe(robohub_event_id id,
     return result;
 }
 
+// @req CORE-0002
 RoboHubError robohub_core_event_unsubscribe(robohub_event_id id,
                                             robohub_core_event_handler handler,
                                             void* user)
@@ -116,6 +118,7 @@ RoboHubError robohub_core_event_publish(robohub_event_id id,
     return robohub_core_event_publish_with_tx(id, 0u, payload, size);
 }
 
+// @req CORE-0001, CORE-0003, CORE-0004
 RoboHubError robohub_core_event_publish_with_tx(robohub_event_id id,
                                                 rh_u16 tx_id,
                                                 const void* payload,
@@ -158,6 +161,7 @@ RoboHubError robohub_core_event_publish_with_tx(robohub_event_id id,
     return ROBOHUB_OK;
 }
 
+// @req CORE-0004
 rh_u16 robohub_core_event_current_tx(void)
 {
     return current_tx;

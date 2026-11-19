@@ -36,6 +36,7 @@ static rh_millis backward_millis(RoboHubTimer* self)
 
 static void no_delay(RoboHubTimer* self, rh_u32 ms) { (void)self; (void)ms; }
 
+// @verifies CORE-0010, CORE-0011
 int main(void)
 {
     /* The probe bits are the schema's ProbeId numbering. */

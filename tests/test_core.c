@@ -24,6 +24,7 @@ static const robohub_core_app app = {
     .init = app_init,
 };
 
+// @verifies CORE-0006
 int main(void)
 {
     assert(strcmp(robohub_core_version(), "0.1.0") == 0);

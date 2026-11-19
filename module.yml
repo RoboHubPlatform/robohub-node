@@ -25,6 +25,10 @@ module:
   license: "MIT"
   created: "2026-10-07"
 
+# The runtime's requirements are numbered CORE-NNNN and serve the system
+# requirements robohub holds.
+requirements: { prefix: CORE, parent: robohub }
+
 build:
   language: c
   standard: c11
@@ -103,6 +107,6 @@ docs:
   title: robohub-core
   section: modules
   order: "10"
-  index: docs/index.md
+  index: docs/doc/index.md
   sources:
-    - docs/index.md
+    - docs/doc/index.md

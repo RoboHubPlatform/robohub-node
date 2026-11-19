@@ -12,6 +12,7 @@
 
 #include <assert.h>
 
+// @verifies CORE-0009
 int main(void)
 {
     /* No operating system beneath. */

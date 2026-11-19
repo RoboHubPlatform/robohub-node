@@ -46,6 +46,7 @@ static RoboHubError always_fails(robohub_event_id id, const void* payload, rh_si
     return ROBOHUB_ERR_FAIL;
 }
 
+// @verifies CORE-0001, CORE-0002, CORE-0003, CORE-0004, CORE-0011
 int main(void)
 {
     assert(robohub_core_event_init() == ROBOHUB_OK);

@@ -22,6 +22,7 @@ static RoboHubTimer* clock_timer;
 static rh_bool initialized;
 static rh_bool running;
 
+// @req CORE-0006
 RoboHubError robohub_core_init(const robohub_core_config* config)
 {
     if (initialized) {
@@ -57,6 +58,7 @@ rh_u32 robohub_core_uptime_ms(void)
     return (rh_u32)clock_timer->get_millis(clock_timer);
 }
 
+// @req CORE-0007, CORE-0008, CORE-0009
 RoboHubError robohub_core_run(void)
 {
     if (!initialized) {
