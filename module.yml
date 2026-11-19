@@ -1,5 +1,5 @@
 #
-# robohub-transport — COBS framing, CRC16 and a byte-stream parser.
+# robohub-transport — COBS framing, a Fletcher-16 check and a byte-stream parser.
 #
 # Sits between a physical byte stream and the runtime: it turns UART, USB CDC,
 # RS-485, SPI or socket bytes into validated frames and publishes each one on the
@@ -15,7 +15,7 @@ module:
   previous_ids:
     - robohub-transport
   type: runtime
-  version: 0.4.1
+  version: 0.4.2
   description: >
     COBS framing with a Fletcher-16 integrity check and a byte-at-a-time parser,
     over any physical byte stream, publishing validated frames on the event bus.
@@ -23,6 +23,10 @@ module:
   maintainer: "Aurel Miron"
   license: "MIT"
   created: "2026-10-08"
+
+# The transport's requirements are numbered TRAN-NNNN (and TRAN-<SUB>-NNNN for
+# framing and the secure link) and serve the system requirements robohub holds.
+requirements: { prefix: TRAN, parent: robohub }
 
 build:
   language: c
@@ -90,7 +94,7 @@ metadata:
     - transport
     - cobs
     - framing
-    - crc
+    - fletcher16
   stability: experimental
   visibility: public
 
@@ -98,6 +102,6 @@ docs:
   title: robohub-transport
   section: modules
   order: "10"
-  index: docs/index.md
+  index: docs/doc/index.md
   sources:
-    - docs/index.md
+    - docs/doc/index.md

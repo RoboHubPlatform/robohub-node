@@ -84,6 +84,12 @@ if(PROJECT_IS_TOP_LEVEL AND RHO_BUILD_HOST_TESTS AND NOT RHO_TARGET_IS_BAREMETAL
   add_executable(robohub-transport-secure-test tests/test_secure.c tests/keystore_double.c)
   target_link_libraries(robohub-transport-secure-test PRIVATE robohub-transport)
   add_test(NAME robohub-transport-secure-test COMMAND robohub-transport-secure-test)
+  # The board against the known-answer vectors robohub-gateway is checked
+  # against too (tests/vectors/secure.json, written by tests/vectors/generate.py).
+  add_executable(robohub-transport-vectors-test tests/test_vectors.c tests/keystore_double.c)
+  target_link_libraries(robohub-transport-vectors-test PRIVATE robohub-transport)
+  add_test(NAME robohub-transport-vectors-test
+           COMMAND robohub-transport-vectors-test "${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/secure.json")
 endif()
 
 # ---------------------------------------------------------------------------

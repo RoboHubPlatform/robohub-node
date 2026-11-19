@@ -19,7 +19,7 @@ msg_id      u16   which event the payload is
 tx_id       u16   0 for telemetry, shared by a call and its answer
 payload_len u16   N
 payload     [N]   the packed bytes a schema generated
-crc16       u16   Fletcher-16 over the header and the payload
+check       u16   Fletcher-16 over the header and the payload
 ```
 
 Little-endian, then COBS-encoded, then terminated by `0x00`. COBS guarantees that
@@ -51,9 +51,16 @@ response can share a `tx_id`.
 
 ## Counters
 
-`crc_errors`, `rx_packets`, `tx_packets` and `dropped` are on the instance. A link
-that is dropping everything says so, which on a board with no debugger is the
-difference between a wire that is wrong and a program that is.
+`check_errors` (frames whose Fletcher-16 check did not match), `rx_packets`,
+`tx_packets` and `dropped` are on the instance. A link that is dropping
+everything says so, which on a board with no debugger is the difference between
+a wire that is wrong and a program that is.
+
+The check is Fletcher-16, not a CRC. Releases before 0.4.2 named the counter
+`crc_errors` and the check's size `RH_TRANSPORT_CRC_SIZE`; both names are kept
+as deprecated aliases of `check_errors` and `RH_TRANSPORT_CHECK_SIZE` (the
+counter is the same field, the size the same value) so existing code compiles,
+and will be removed in a later minor release.
 
 ## Deployment transports
 

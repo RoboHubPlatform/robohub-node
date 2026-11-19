@@ -19,7 +19,7 @@ msg_id      u16   which event the payload is
 tx_id       u16   0 for telemetry, shared by a call and its answer
 payload_len u16   N
 payload     [N]   the packed bytes a schema generated
-crc16       u16   Fletcher-16 over the header and the payload
+check       u16   Fletcher-16 over the header and the payload
 ```
 
 Little-endian, then COBS-encoded, then terminated by `0x00`. COBS guarantees that
@@ -51,9 +51,16 @@ response can share a `tx_id`.
 
 ## Counters
 
-`crc_errors`, `rx_packets`, `tx_packets` and `dropped` are on the instance. A link
-that is dropping everything says so, which on a board with no debugger is the
-difference between a wire that is wrong and a program that is.
+`check_errors` (frames whose Fletcher-16 check did not match), `rx_packets`,
+`tx_packets` and `dropped` are on the instance. A link that is dropping
+everything says so, which on a board with no debugger is the difference between
+a wire that is wrong and a program that is.
+
+The check is Fletcher-16, not a CRC. Releases before 0.4.2 named the counter
+`crc_errors` and the check's size `RH_TRANSPORT_CRC_SIZE`; both names are kept
+as deprecated aliases of `check_errors` and `RH_TRANSPORT_CHECK_SIZE` (the
+counter is the same field, the size the same value) so existing code compiles,
+and will be removed in a later minor release.
 
 ## Deployment transports
 
@@ -124,6 +131,31 @@ back from disk: it can only place that session's upward counter past a margin,
 and a board still counting below it would go unheard until it passed it.
 Unsealed, or under any other session, the frame is refused like any other.
 
+### Known-answer vectors
+
+The board and the gateway implement the secure link apart, in C and in Rho. One
+file holds the answers both are checked against: `tests/vectors/secure.json`,
+here, is the canonical copy. It is written once by `tests/vectors/generate.py`,
+an independent transcription of `secure.h` with nothing random in it — the key
+derivations of epochs 0, 1 and 2, the hellos under epochs 0 and 1, a session
+and its two keys, sealed frames both ways with their counters (a reading, a
+command and its acknowledgement), `SESSION_RESET`, `REKEY` with its wrap and
+`REKEY_ACK` with its proof — each as its payload and as the whole frame on the
+wire.
+
+- `tests/test_vectors.c` checks the board byte for byte, through
+  `robohub_secure_*` and through the transport.
+- robohub-gateway keeps an identical copy in its `tests/vectors/secure.json`
+  and checks the gateway binary against it (`tools/vectors-smoke.py`); the first
+  thing that suite checks is that its copy is this file, when a robohub-transport
+  checkout is beside it (or under `ROBOHUB_WORKSPACE`).
+- The `vectors` suite runs `generate.py --check`, so the file is what the
+  generator writes.
+
+A change to the protocol is a change to `generate.py`: run it, copy the file to
+robohub-gateway, and both suites say whether their side follows. A vector one
+side does not meet is a protocol question, not a test to update.
+
 ## Taking a frame before the bus
 
 `robohub_transport_on_frame(&link, hook, user)` hands every frame that checks out
@@ -136,5 +168,5 @@ whole — its id, sealed or not, its transaction and its payload — inside a
 ## Network transports
 
 The capability list includes `http` and `mqtt`. A board whose platform supplies
-an HTTP client or an MQTT client can select them; the framing and CRC stay the
-same, and the device integration names the topic or the RPC path.
+an HTTP client or an MQTT client can select them; the framing and Fletcher-16 check stay
+the same, and the device integration names the topic or the RPC path.

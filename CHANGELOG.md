@@ -23,3 +23,9 @@ Keys have epochs: `robohub_secure_init_epoch` takes the build's epoch and key sc
 ## [0.4.1] - 2026-11-14
 
 A sealed `SESSION_RESET` under the current session drops it and sends a new HELLO at once.
+
+## [0.4.2] - 2026-11-19
+
+Known-answer vectors for the secure link, shared with robohub-gateway: `tests/vectors/secure.json`, written once by `tests/vectors/generate.py` (an independent transcription of `secure.h`) — the key derivations, the hellos under epochs 0 and 1, a session and its keys, sealed frames both ways with their counters, `SESSION_RESET`, `REKEY` and the `REKEY_ACK` proof. `tests/test_vectors.c` checks the board against it byte for byte, through the secure layer and on the wire; the gateway checks its side against the same file. Before, the board was tested only against a gateway re-implemented in C inside its own test, so both sides could have drifted the same way unnoticed. The secure layer is unchanged.
+
+The frame check is Fletcher-16, and the header's `@brief`, the documentation, the counter and a constant called it a CRC. The correctly named `check_errors` counter and `RH_TRANSPORT_CHECK_SIZE` are added and the module uses them; `crc_errors` (the same field, through an anonymous union, marked deprecated for GCC and Clang) and `RH_TRANSPORT_CRC_SIZE` (the same value) stay as deprecated aliases, so existing C code still compiles, and will be removed in a later minor release. The documentation calls the frame's last field `check`.

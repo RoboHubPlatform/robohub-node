@@ -31,6 +31,7 @@
  * flipped bit, a dropped byte, a transposition — where a table-driven CRC would
  * cost a table this library would have to carry.
  */
+// @req TRAN-FRAME-0001
 static rh_u16 fletcher16(const rh_u8* data, rh_size length)
 {
     rh_u16 sum1 = 0u;
@@ -48,6 +49,7 @@ static rh_u16 fletcher16(const rh_u8* data, rh_size length)
 
 /* Encode into `output`, which must hold RH_TRANSPORT_ENCODED_MAX bytes. Returns
  * the encoded length; the caller appends the delimiter. */
+// @req TRAN-FRAME-0001
 static rh_size cobs_encode(const rh_u8* input, rh_size length, rh_u8* output)
 {
     rh_size read_index = 0u;
@@ -142,6 +144,7 @@ static void transport_hello(RoboHubTransport* transport);
 /* A frame that just finished is decoded, checked and, if it passes, published.
  * Anything wrong with it is counted and dropped: a stream has no way to ask for
  * the bytes again, and a half-frame is not worth keeping. */
+// @req TRAN-0002, TRAN-FRAME-0002, TRAN-FRAME-0003, TRAN-SEC-0008, TRAN-SEC-0011
 static void transport_deliver(RoboHubTransport* transport)
 {
     rh_u8 frame[RH_TRANSPORT_MAX_FRAME_SIZE];
@@ -156,7 +159,7 @@ static void transport_deliver(RoboHubTransport* transport)
     rh_u16 tx_id = get_u16(&frame[2]);
     rh_u16 payload_len = get_u16(&frame[4]);
 
-    if ((rh_size)RH_TRANSPORT_HEADER_SIZE + payload_len + RH_TRANSPORT_CRC_SIZE != decoded) {
+    if ((rh_size)RH_TRANSPORT_HEADER_SIZE + payload_len + RH_TRANSPORT_CHECK_SIZE != decoded) {
         transport->dropped++;
         return;
     }
@@ -165,7 +168,7 @@ static void transport_deliver(RoboHubTransport* transport)
     rh_u16 actual = fletcher16(frame, (rh_size)RH_TRANSPORT_HEADER_SIZE + payload_len);
 
     if (expected != actual) {
-        transport->crc_errors++;
+        transport->check_errors++;
         return;
     }
 
@@ -221,6 +224,7 @@ static void transport_deliver(RoboHubTransport* transport)
                                              payload, (rh_u16)length);
 }
 
+// @req TRAN-FRAME-0002, TRAN-FRAME-0005
 void robohub_transport_feed_byte(RoboHubTransport* transport, rh_u8 byte)
 {
     if (byte == RH_TRANSPORT_DELIMITER) {
@@ -261,6 +265,7 @@ RoboHubError robohub_transport_secure(RoboHubTransport* transport, RoboHubSecure
     return ROBOHUB_OK;
 }
 
+// @req TRAN-0006, TRAN-FRAME-0006
 RoboHubError robohub_transport_on_frame(RoboHubTransport* transport,
                                         RoboHubTransportFrameHook hook, void* user)
 {
@@ -280,6 +285,7 @@ static RoboHubError transport_write(RoboHubTransport* transport, rh_u16 msg_id, 
  * noisy line must not leave the board waiting for an answer that cannot come. */
 #define RH_TRANSPORT_HELLO_RETRY_MS 2000u
 
+// @req TRAN-0002, TRAN-SEC-0007
 RoboHubError robohub_transport_send(RoboHubTransport* transport,
                                     robohub_event_id msg_id,
                                     rh_u16 tx_id,
@@ -301,7 +307,7 @@ RoboHubError robohub_transport_send(RoboHubTransport* transport,
     rh_size sealed_length = 0u;
     RoboHubError err = robohub_secure_seal(secure, (rh_u16)msg_id, tx_id, (const rh_u8*)payload,
                                            payload_len, sealed,
-                                           RH_TRANSPORT_MAX_FRAME_SIZE - RH_TRANSPORT_HEADER_SIZE - RH_TRANSPORT_CRC_SIZE,
+                                           RH_TRANSPORT_MAX_FRAME_SIZE - RH_TRANSPORT_HEADER_SIZE - RH_TRANSPORT_CHECK_SIZE,
                                            &sealed_length);
     if (err != ROBOHUB_OK) {
         return err;
@@ -310,6 +316,7 @@ RoboHubError robohub_transport_send(RoboHubTransport* transport,
                            (rh_u16)sealed_length);
 }
 
+// @req TRAN-SEC-0007
 static void transport_hello(RoboHubTransport* transport)
 {
     RoboHubSecure* secure = transport->secure;
@@ -324,10 +331,11 @@ static void transport_hello(RoboHubTransport* transport)
     }
 }
 
+// @req TRAN-0001, TRAN-FRAME-0001, TRAN-FRAME-0004
 static RoboHubError transport_write(RoboHubTransport* transport, rh_u16 msg_id, rh_u16 tx_id,
                                     const void* payload, rh_u16 payload_len)
 {
-    if ((rh_size)RH_TRANSPORT_HEADER_SIZE + payload_len + RH_TRANSPORT_CRC_SIZE
+    if ((rh_size)RH_TRANSPORT_HEADER_SIZE + payload_len + RH_TRANSPORT_CHECK_SIZE
         > RH_TRANSPORT_MAX_FRAME_SIZE) {
         return ROBOHUB_ERR_INVALID_ARG;
     }
@@ -341,7 +349,7 @@ static RoboHubError transport_write(RoboHubTransport* transport, rh_u16 msg_id, 
     }
     rh_size body = (rh_size)RH_TRANSPORT_HEADER_SIZE + payload_len;
     put_u16(&frame[body], fletcher16(frame, body));
-    body += RH_TRANSPORT_CRC_SIZE;
+    body += RH_TRANSPORT_CHECK_SIZE;
 
     rh_u8 encoded[RH_TRANSPORT_ENCODED_MAX + 1u];
     rh_size encoded_len = cobs_encode(frame, body, encoded);

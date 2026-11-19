@@ -178,7 +178,7 @@ int main(void)
     assert(memcmp(seen, payload, sizeof(payload)) == 0);
     assert(sender.tx_packets == 1u);
     assert(receiver.rx_packets == 1u);
-    assert(receiver.crc_errors == 0u);
+    assert(receiver.check_errors == 0u);
 
     /* The delimiter appears only at the end: that is what lets the parser find a
      * boundary without a timer. */
@@ -197,7 +197,21 @@ int main(void)
     captured[2] ^= 0x40u;
     robohub_transport_feed(&receiver, captured, captured_len);
     assert(deliveries == before);
-    assert(receiver.crc_errors == 1u);
+    assert(receiver.check_errors == 1u);
+
+    /* The old names are deprecated aliases of the new ones, so code written
+     * against them still compiles and reads the same counter and size. */
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+    assert(receiver.crc_errors == receiver.check_errors);
+    assert(&receiver.crc_errors == &receiver.check_errors);
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
+    assert(RH_TRANSPORT_CRC_SIZE == RH_TRANSPORT_CHECK_SIZE);
+    assert(RH_TRANSPORT_MIN_FRAME == RH_TRANSPORT_HEADER_SIZE + RH_TRANSPORT_CHECK_SIZE);
 
     /* Noise longer than a frame is dropped rather than kept. */
     rh_u8 noise[RH_TRANSPORT_MAX_FRAME_SIZE + 8u];

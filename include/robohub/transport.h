@@ -1,6 +1,6 @@
 /**
  * @file transport.h
- * @brief Framing for a byte stream: COBS, a CRC, and a byte-at-a-time parser.
+ * @brief Framing for a byte stream: COBS, a Fletcher-16 check, and a byte-at-a-time parser.
  *
  * A UART, a USB CDC pipe, an RS-485 bus and a socket all do the same thing to a
  * message: they deliver it as bytes, with no idea where one message ends and the
@@ -60,10 +60,23 @@ extern "C" {
 #define RH_TRANSPORT_DELIMITER 0x00u
 /** msg_id, tx_id and payload_len, little-endian. */
 #define RH_TRANSPORT_HEADER_SIZE 6u
-/** The integrity check that follows the payload. */
-#define RH_TRANSPORT_CRC_SIZE 2u
+/** The integrity check that follows the payload: Fletcher-16, little-endian. */
+#define RH_TRANSPORT_CHECK_SIZE 2u
+/**
+ * @deprecated Use RH_TRANSPORT_CHECK_SIZE. The check is Fletcher-16, not a CRC;
+ * the name is kept so existing code compiles and will be removed in a later
+ * minor release.
+ */
+#define RH_TRANSPORT_CRC_SIZE RH_TRANSPORT_CHECK_SIZE
 /** The smallest frame that carries a header and a check. */
-#define RH_TRANSPORT_MIN_FRAME (RH_TRANSPORT_HEADER_SIZE + RH_TRANSPORT_CRC_SIZE)
+#define RH_TRANSPORT_MIN_FRAME (RH_TRANSPORT_HEADER_SIZE + RH_TRANSPORT_CHECK_SIZE)
+
+/* Marks a name kept only so existing code compiles. */
+#if defined(__GNUC__) || defined(__clang__)
+#  define RH_TRANSPORT_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#else
+#  define RH_TRANSPORT_DEPRECATED(msg)
+#endif
 
 /* -------------------------------------------------------------------------- */
 /*  Physical link                                                             */
@@ -112,8 +125,16 @@ typedef struct RoboHubTransport {
     RoboHubTransportPhy phy;
     rh_u8   rx[RH_TRANSPORT_MAX_FRAME_SIZE];
     rh_size rx_length;
-    /** Frames whose check did not match. */
-    rh_u32  crc_errors;
+    union {
+        /** Frames whose Fletcher-16 check did not match. */
+        rh_u32  check_errors;
+        /**
+         * @deprecated The same counter as check_errors, by its old name (the
+         * check is Fletcher-16, not a CRC); kept so existing code compiles and
+         * will be removed in a later minor release.
+         */
+        rh_u32  crc_errors RH_TRANSPORT_DEPRECATED("use check_errors: the check is Fletcher-16");
+    };
     /** Frames delivered to the bus. */
     rh_u32  rx_packets;
     /** Frames handed to the link. */

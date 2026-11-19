@@ -166,6 +166,7 @@ static void rh_hmac_end(rh_hmac* h, rh_u8* out, rh_size out_length)
     memcpy(out, mac, out_length);
 }
 
+// @req TRAN-SEC-0001
 void robohub_secure_hmac(const rh_u8* key, rh_size key_length,
                          const rh_u8* message, rh_size message_length,
                          rh_u8* out, rh_size out_length)
@@ -177,6 +178,7 @@ void robohub_secure_hmac(const rh_u8* key, rh_size key_length,
 }
 
 /* A tag comparison that takes as long whether the first byte differs or the last. */
+// @req TRAN-SEC-0005
 static int rh_equal(const rh_u8* a, const rh_u8* b, rh_size n)
 {
     rh_u8 diff = 0u;
@@ -204,6 +206,7 @@ static rh_u32 rh_get_u32(const rh_u8* in) { return (rh_u32)in[0] | ((rh_u32)in[1
 
 /* With no source, no session: a nonce that fell back to something predictable
  * would let an old SESSION be replayed. A platform overrides this. */
+// @req TRAN-SEC-0002
 __attribute__((weak)) int robohub_platform_nonce(rh_u8* out, rh_size length)
 {
     (void)out;
@@ -215,6 +218,7 @@ __attribute__((weak)) int robohub_platform_nonce(rh_u8* out, rh_size length)
 /*  Session                                                                   */
 /* -------------------------------------------------------------------------- */
 
+// @req TRAN-0003, TRAN-SEC-0010
 RoboHubError robohub_secure_init_epoch(RoboHubSecure* secure,
                                        const rh_u8 uid[RH_SECURE_UID_SIZE],
                                        const rh_u8 device_key[RH_SECURE_KEY_SIZE],
@@ -258,6 +262,7 @@ RoboHubError robohub_secure_init(RoboHubSecure* secure,
     return robohub_secure_init_epoch(secure, uid, device_key, 0u, 0, nonce, now_ms);
 }
 
+// @req TRAN-SEC-0010
 RoboHubError robohub_secure_on_store(RoboHubSecure* secure, RoboHubSecureStore store, void* user)
 {
     if (secure == 0) {
@@ -268,6 +273,7 @@ RoboHubError robohub_secure_on_store(RoboHubSecure* secure, RoboHubSecureStore s
     return ROBOHUB_OK;
 }
 
+// @req TRAN-0005, TRAN-SEC-0011
 RoboHubError robohub_secure_reset(RoboHubSecure* secure)
 {
     if (secure == 0) {
@@ -283,6 +289,7 @@ RoboHubError robohub_secure_reset(RoboHubSecure* secure)
     return ROBOHUB_OK;
 }
 
+// @req TRAN-SEC-0006
 int robohub_secure_ready(const RoboHubSecure* secure)
 {
     if (secure == 0 || secure->state != RH_SECURE_ESTABLISHED) {
@@ -294,6 +301,7 @@ int robohub_secure_ready(const RoboHubSecure* secure)
            secure->tx_counter < 0xFFFFFFF0u;
 }
 
+// @req TRAN-0003, TRAN-SEC-0002
 RoboHubError robohub_secure_hello(RoboHubSecure* secure, rh_u8 out[RH_SECURE_HELLO_SIZE])
 {
     if (secure == 0 || out == 0) {
@@ -320,6 +328,7 @@ RoboHubError robohub_secure_hello(RoboHubSecure* secure, rh_u8 out[RH_SECURE_HEL
     return ROBOHUB_OK;
 }
 
+// @req TRAN-SEC-0003
 RoboHubError robohub_secure_accept(RoboHubSecure* secure, const rh_u8* payload, rh_size length)
 {
     if (secure == 0 || payload == 0 || length != RH_SECURE_SESSION_SIZE ||
@@ -383,6 +392,7 @@ static void rh_frame_tag(const rh_u8* key, rh_u16 msg_id, rh_u16 tx_id,
     rh_hmac_end(&h, out, RH_SECURE_TAG_SIZE);
 }
 
+// @req TRAN-0002, TRAN-SEC-0004
 RoboHubError robohub_secure_seal(RoboHubSecure* secure, rh_u16 msg_id, rh_u16 tx_id,
                                  const rh_u8* payload, rh_size length,
                                  rh_u8* out, rh_size capacity, rh_size* out_length)
@@ -408,6 +418,7 @@ RoboHubError robohub_secure_seal(RoboHubSecure* secure, rh_u16 msg_id, rh_u16 tx
     return ROBOHUB_OK;
 }
 
+// @req TRAN-0002, TRAN-SEC-0005
 RoboHubError robohub_secure_open(RoboHubSecure* secure, rh_u16 msg_id, rh_u16 tx_id,
                                  const rh_u8* payload, rh_size length,
                                  const rh_u8** inner, rh_size* inner_length)
@@ -439,6 +450,7 @@ RoboHubError robohub_secure_open(RoboHubSecure* secure, rh_u16 msg_id, rh_u16 tx
 /*  Key rotation                                                              */
 /* -------------------------------------------------------------------------- */
 
+// @req TRAN-0004, TRAN-SEC-0008, TRAN-SEC-0009
 RoboHubError robohub_secure_rekey(RoboHubSecure* secure, const rh_u8* payload, rh_size length,
                                   rh_u8 ack[RH_SECURE_REKEY_ACK_SIZE])
 {
