@@ -1,0 +1,11 @@
+# robohub-telemetry's host tests. The ctest kind configures, builds and runs
+# them, so `rho test` is how they run, here and in CI.
+name: robohub-telemetry
+suites:
+  # test_telemetry.c: decimation, multi-sink routing, log interception, the
+  # transaction id, and the socket sink refused beside an authenticated link.
+  # @verifies TELE-0001, TELE-0002, TELE-0003, TELE-0004, TELE-0005, TELE-0006, TELE-0008
+  - name: unit
+    kind: ctest
+    tags: [unit, host]
+    ctest: {}

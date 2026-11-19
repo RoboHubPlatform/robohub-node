@@ -15,7 +15,7 @@ module:
   previous_ids:
     - robohub-telemetry
   type: runtime
-  version: 0.1.1
+  version: 0.1.2
   description: >
     Binds the runtime's event bus to physical sinks — transport frames and IP
     sockets — with per-event decimation, multi-sink routing and log interception.
@@ -23,6 +23,10 @@ module:
   maintainer: "Aurel Miron"
   license: "MIT"
   created: "2026-10-08"
+
+# The telemetry bridge's requirements are numbered TELE-NNNN and serve the system
+# requirements robohub holds.
+requirements: { prefix: TELE, parent: robohub }
 
 build:
   language: c
@@ -97,6 +101,6 @@ docs:
   title: robohub-telemetry
   section: modules
   order: "10"
-  index: docs/index.md
+  index: docs/doc/index.md
   sources:
-    - docs/index.md
+    - docs/doc/index.md

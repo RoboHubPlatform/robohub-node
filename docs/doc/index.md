@@ -39,8 +39,26 @@ robohub_telemetry_log(2, "motor", "overcurrent");
 
 A sink is `ROBOHUB_SINK_TRANSPORT` (a `robohub-transport` link, see
 {ref}`robohub-transport/index`) or `ROBOHUB_SINK_SOCKET` (a network socket from
-`robohub-common`'s `robohub/net.h`). It carries bytes. The payload is the packed struct a rho schema generated; the
+`robohub-common`'s `robohub/net.h`, plain frames only — see below). It carries bytes. The payload is the packed struct a rho schema generated; the
 sink adds framing, not meaning.
+
+## Socket sinks and an authenticated link
+
+A socket sink writes plain frames: it has no session to seal under, and no way
+to hear a gateway's answer to a hello. It is for a local collector — a bench
+tool on the same network as a board whose link is not authenticated. While any
+sink's transport is secure (`robohub_transport_secure`), a socket sink is
+refused (`robohub_telemetry_add_sink` answers `ROBOHUB_ERR_STATE`), and one
+registered before the link was secured writes nothing; each frame it does not
+write is counted in `frames_dropped`. A plain copy of every reading beside the
+sealed one would be refused by the gateway on a network link anyway, and is one
+anyone on that network could forge without being told apart.
+
+A board that reports to a gateway over IP does not use a socket sink: it uses a
+transport sink whose link writes to the socket (a `RoboHubTransportPhy` over
+`robohub_socket_send`), so its frames are sealed exactly as a serial link's are
+and the gateway's answers come back through it — as the ds18b20 telemetry
+example in robohub-drivers does.
 
 ## Counters
 

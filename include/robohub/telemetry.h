@@ -86,6 +86,13 @@ typedef enum {
  * payload and check without the byte-stuffing a stream needs. Either may be
  * disabled without being removed, which is how a link that is down is quiet
  * without a rule being torn up.
+ *
+ * A socket sink's frames are plain: it is for a local collector on a board
+ * whose link is not authenticated. While a sink's transport is secure
+ * (robohub_transport_secure), a socket sink is refused (ROBOHUB_ERR_STATE) and
+ * one registered earlier writes nothing — its frames are counted as dropped.
+ * A board that reports to a gateway over IP uses a transport sink whose link
+ * writes to the socket, so its frames are sealed like a serial link's.
  */
 typedef struct {
     RoboHubSinkType type;
@@ -109,7 +116,10 @@ typedef struct {
 /** Clear the sinks and the rules. */
 RoboHubError robohub_telemetry_init(void);
 
-/** Register a sink. Returns `ROBOHUB_ERR_NO_MEM` when the table is full. */
+/**
+ * Register a sink. Returns `ROBOHUB_ERR_NO_MEM` when the table is full, and
+ * `ROBOHUB_ERR_STATE` for a socket sink while a sink's transport is secure.
+ */
 RoboHubError robohub_telemetry_add_sink(const RoboHubTelemetrySink* sink);
 
 /**

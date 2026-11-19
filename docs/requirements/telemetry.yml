@@ -1,0 +1,120 @@
+# What robohub-telemetry does towards the system requirements: on a board, the
+# bridge from the runtime's event bus to the links readings leave by — a
+# transport, which seals them when the link is authenticated, or a socket.
+# Written in the R5 backfill from telemetry.h, telemetry.c, the changelog and the
+# host test; proposed until the maintainer approves them.
+level: NODE
+prefix: TELE
+title: Telemetry
+requirements:
+  - id: TELE-0001
+    title: A bridged event reaches every enabled sink unchanged
+    statement: >
+      While an event is enabled, the bridge shall write each publication of it,
+      payload unchanged, to every registered sink that is enabled, and a sink
+      that fails shall be counted without keeping the others from theirs.
+    rationale: >
+      A program publishes a reading on the bus and does not know which link it
+      leaves by; through a transport sink on an authenticated link the reading is
+      sealed (robohub-transport TRAN-0002), which is the only way the gateway
+      takes it (GW-0001).
+    satisfies: [SYS-0048]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, sinks]
+
+  - id: TELE-0002
+    title: Each event is thinned at its own rate
+    statement: >
+      An event enabled with a decimation N greater than 1 shall reach the sinks
+      once in every N publications, an event enabled with 0 or 1 every time, and
+      enabling an event again shall replace its rule and restart its count;
+      disabling it shall stop it reaching the sinks.
+    rationale: A control loop publishes faster than a radio or a 115200-baud UART can carry; the answer is one reading in N, per signal, not a slower loop.
+    satisfies: [SYS-0048]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, decimation]
+
+  - id: TELE-0003
+    title: A frame keeps its transaction id
+    statement: >
+      Every frame the bridge writes shall carry the transaction id the event was
+      published with, 0 for plain telemetry.
+    rationale: A request and its answer share a transaction id; without it the gateway could not match a device's acknowledgement to its command (GW-0006).
+    satisfies: [SYS-0025]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, commands]
+
+  - id: TELE-0004
+    title: A socket sink writes the transport's frame without COBS
+    statement: >
+      A socket sink shall write the transport's header, the payload and the
+      Fletcher-16 check in one send, without byte-stuffing, and shall drop and
+      count a message whose frame would exceed RH_TRANSPORT_MAX_FRAME_SIZE.
+    rationale: A datagram is already delimited; the header and check are the same as on a serial link, so one decoder reads both.
+    satisfies: [SYS-0048]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, sinks, wire-format]
+
+  - id: TELE-0005
+    title: A log line goes out as text under the log event
+    statement: >
+      robohub_telemetry_log shall send the text `level tag: message`, cut to at
+      most 159 bytes, to every enabled sink as event 0x0010 with transaction 0.
+    rationale: A board with no debugger tells what went wrong over the link it already has, and the gateway reads it without a schema.
+    satisfies: [SYS-0050]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, logging, observability]
+
+  - id: TELE-0006
+    title: The bridge counts what it routed and dropped
+    statement: >
+      The bridge shall count one routed frame for each frame a sink accepted and
+      one dropped frame for each a sink refused or could not take, and return
+      both through robohub_telemetry_stats.
+    rationale: A link that is dropping everything must say so.
+    satisfies: [SYS-0050]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, observability]
+
+  - id: TELE-0007
+    title: The tables are fixed in size
+    statement: >
+      The bridge shall hold at most RH_TELEMETRY_MAX_SINKS sinks (4 by default)
+      and RH_TELEMETRY_MAX_RULES bridged events (8 by default), set in Kconfig,
+      answer ROBOHUB_ERR_NO_MEM when either is full, and allocate no memory.
+    rationale: It runs on boards with no heap; a full table must be an answer, not a crash.
+    satisfies: [SYS-0048]
+    status: proposed
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, embedded]
+
+  - id: TELE-0008
+    title: No plain socket frames beside an authenticated link
+    statement: While a sink's transport is authenticated, the bridge shall refuse to register a socket sink (ROBOHUB_ERR_STATE) and shall write nothing to a socket sink registered earlier, counting each frame it did not write as dropped; a board with no authenticated link keeps its socket sinks.
+    rationale: A socket sink cannot seal; a plain copy of every reading beside the sealed one is refused by the gateway on a network link and can be forged by anyone on that network without being told apart.
+    satisfies: [SYS-0020]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, sinks, security]
