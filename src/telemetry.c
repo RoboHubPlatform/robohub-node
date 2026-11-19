@@ -98,7 +98,7 @@ static void route_to(const RoboHubTelemetrySink* sink,
         stats.frames_dropped++;
         return;
     }
-    if ((rh_size)RH_TRANSPORT_HEADER_SIZE + length + RH_TRANSPORT_CRC_SIZE > RH_TRANSPORT_MAX_FRAME_SIZE) {
+    if ((rh_size)RH_TRANSPORT_HEADER_SIZE + length + RH_TRANSPORT_CHECK_SIZE > RH_TRANSPORT_MAX_FRAME_SIZE) {
         stats.frames_dropped++;
         return;
     }
@@ -111,7 +111,7 @@ static void route_to(const RoboHubTelemetrySink* sink,
     }
     rh_size body = (rh_size)RH_TRANSPORT_HEADER_SIZE + length;
     put_u16(&frame[body], fletcher16(frame, body));
-    body += RH_TRANSPORT_CRC_SIZE;
+    body += RH_TRANSPORT_CHECK_SIZE;
 
     if (robohub_socket_send(sink->handle.socket, frame, body) == (int)body) {
         stats.frames_routed++;
