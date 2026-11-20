@@ -1,0 +1,177 @@
+# What robohub-core does towards the system requirements: the runtime a board's
+# program runs in — the event bus every frame and reading passes through, the
+# cooperative scheduler, the application lifecycle, the bare-metal OSAL and the
+# hardware smoke. Written in the R5 backfill from the headers, the sources and
+# the host tests; proposed until the maintainer approves them.
+level: NODE
+prefix: CORE
+title: Core runtime
+requirements:
+  - id: CORE-0001
+    title: An event reaches exactly the handlers subscribed to it
+    statement: >
+      Publishing an event shall call, before it returns, every handler
+      subscribed to that event id and no other, each with the publisher's
+      payload pointer and size; publishing an event nobody subscribed to shall
+      succeed, and publishing RH_EVENT_NONE shall be refused with
+      ROBOHUB_ERR_INVALID_ARG.
+    rationale: >
+      A command the transport opens reaches the code that switches the output
+      through this bus, and nothing else may act on it; there is no queue and
+      no copy, so the payload's lifetime is the call.
+    satisfies: [SYS-0045]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [event-bus]
+
+  - id: CORE-0002
+    title: Subscriptions are bounded and idempotent
+    statement: >
+      The bus shall hold at most RH_CORE_MAX_SUBSCRIBERS subscriptions (16 by
+      default), answer ROBOHUB_ERR_NO_MEM when full, refuse a null handler with
+      ROBOHUB_ERR_INVALID_ARG, keep one subscription for the same event, handler
+      and user subscribed twice, and stop calling a handler once it is
+      unsubscribed.
+    rationale: A module brought up twice is one module, and a full table on a board with no heap must be an answer, not a crash.
+    satisfies: [SYS-0045]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [event-bus, embedded]
+
+  - id: CORE-0003
+    title: A failing handler is counted and silences no one
+    statement: >
+      A handler that returns an error shall be counted in handler_errors and kept
+      as last_error, the remaining handlers shall still be called, and the
+      publish shall still succeed.
+    rationale: One component that refuses its events must not stop another's, and is the thing worth seeing in the diagnostics.
+    satisfies: [SYS-0050]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [event-bus, diagnostics]
+
+  - id: CORE-0004
+    title: A transaction id belongs to its dispatch
+    statement: >
+      While a handler runs, robohub_core_event_current_tx shall return the
+      transaction id its event was published with, and after the publish returns
+      the id that was current before it.
+    rationale: The telemetry bridge frames a handler's answer with the request's transaction id, which is how the gateway matches an acknowledgement to its command (GW-0006).
+    satisfies: [SYS-0045]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [event-bus, commands]
+
+  - id: CORE-0005
+    title: A periodic task runs once per period
+    statement: >
+      A task shall run on the first scheduler pass after it is added and then on
+      the first pass at least its period after its last run, with due-ness
+      compared as a signed difference so the millisecond counter wrapping is not
+      a special case; the scheduler shall hold at most RH_CORE_MAX_TASKS tasks (8
+      by default) and refuse a null function or a zero period.
+    rationale: A board samples and reports at the rates it was built with, unattended, for longer than the 49.7 days a 32-bit millisecond counter lasts.
+    satisfies: [SYS-0045]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [scheduler]
+
+  - id: CORE-0006
+    title: The runtime does not start without a clock
+    statement: >
+      robohub_core_init shall return ROBOHUB_ERR_NOT_FOUND, and call no
+      application's init, when neither its configuration nor the HAL registry
+      provides the timer named RH_CORE_TIMER_NAME ("system_timer" by default).
+    rationale: A loop that cannot measure time cannot keep a sampling rate or a session's lifetime; saying so at init is better than running wrong.
+    satisfies: [SYS-0050]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [lifecycle]
+
+  - id: CORE-0007
+    title: Applications start in order and stop in reverse
+    statement: >
+      The runtime shall hold at most RH_CORE_MAX_APPS applications (4 by
+      default), call their init and start in the order they were registered,
+      stopping at the first that fails, step each on every pass of the loop, and
+      call their stop in the reverse order.
+    rationale: An application that depends on another's bring-up registers after it, and is torn down before it.
+    satisfies: [SYS-0045]
+    status: proposed
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [lifecycle]
+
+  - id: CORE-0008
+    title: The bare-metal loop wakes at least every tick
+    statement: >
+      Without an operating system, each pass of the runtime's loop shall publish
+      RH_EVENT_CORE_TICK with the uptime, run the due tasks and step the
+      applications, then wait until the next task is due but no longer than
+      RH_CORE_TICK_MS (10 ms by default) and at least 1 ms.
+    rationale: A command arriving between tasks is handled within a tick, and a board does not spin at full power when nothing is due.
+    satisfies: [SYS-0045]
+    status: proposed
+    verification: analysis
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [lifecycle, scheduler]
+
+  - id: CORE-0009
+    title: With a kernel every task is a thread
+    statement: >
+      When the OSAL reports an operating system, the runtime shall run each
+      periodic task as a thread of its own and the loop as one more thread, then
+      start the kernel; without one, the bare-metal OSAL shall create no thread,
+      give mutexes that lock nothing and return from start so the runtime runs
+      its own loop.
+    rationale: The same program runs on an AVR with no kernel and on an ESP32 under FreeRTOS, written once.
+    satisfies: [SYS-0045]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [osal, portability]
+
+  - id: CORE-0010
+    title: The hardware smoke reports what it can tell
+    statement: >
+      robohub_core_smoke shall report the console as passing, the timer as
+      failing when two reads go backwards and as absent when there is none, each
+      bus kind as passing when the platform registered one and absent otherwise,
+      and the network as absent, each in the ProbeId bit the schema numbers.
+    rationale: The gateway runs a board's hardware smoke on request (GW-0009); a probe the runtime cannot answer is left absent rather than guessed.
+    satisfies: [SYS-0050]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [diagnostics, smoke]
+
+  - id: CORE-0011
+    title: The runtime counts what it does
+    statement: >
+      The runtime shall count events published, deliveries, handler errors,
+      tasks run, task errors and application steps, keep the uptime and the last
+      error, return them through robohub_core_diagnostics_get and zero them on
+      robohub_core_diagnostics_reset.
+    rationale: On a board with no debugger, the counters tell a wire that is wrong from a program that is.
+    satisfies: [SYS-0050]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [diagnostics]
