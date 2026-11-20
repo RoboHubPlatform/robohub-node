@@ -152,6 +152,14 @@ typedef struct RoboHubTransport {
     /** Who takes a frame before the bus does (robohub_transport_on_frame). */
     RoboHubTransportFrameHook on_frame;
     void*   on_frame_user;
+    /* HEALTH (robohub_transport_report_health): whether this link reports the
+     * board's, the device it names and the firmware, and whether it went out
+     * this boot. */
+    rh_bool health_on;
+    rh_bool health_sent;
+    rh_u16  health_area;
+    rh_u16  health_node;
+    rh_u16  health_firmware;
 } RoboHubTransport;
 
 /* -------------------------------------------------------------------------- */
@@ -202,6 +210,45 @@ RoboHubError robohub_transport_send(RoboHubTransport* transport,
                                     rh_u16 tx_id,
                                     const void* payload,
                                     rh_u16 payload_len);
+
+/** The board's account of its last restart (robohub-protocol PROTO-0007). */
+#define RH_TRANSPORT_MSG_HEALTH       0x0403u
+/** A diagnostic request: answered, among whatever else answers it, with HEALTH. */
+#define RH_TRANSPORT_MSG_DIAG_REQUEST 0x0401u
+/** HEALTH's payload: version, device (version, area, node), reason, boot count,
+ *  fault code, task, pc, uptime, firmware — little-endian. */
+#define RH_TRANSPORT_HEALTH_SIZE      30u
+
+/**
+ * @brief Make this link report the board's health (RNODE-HEALTH-0004).
+ *
+ * From then on the link sends HEALTH — the reset reason, boot count and fault
+ * record the node core read at boot (robohub/core/health.h), naming `area` and
+ * `node` and carrying `firmware` — once per boot: on an authenticated link as
+ * soon as its session with the gateway is established, on a plain link at once
+ * (or, if that write fails, just before the next frame it sends). It sends it
+ * again whenever a DIAG_REQUEST arrives. A session that drops and comes back does not send it again: it is
+ * about the boot, and a diagnostic request asks anew.
+ */
+RoboHubError robohub_transport_report_health(RoboHubTransport* transport,
+                                             rh_u16 area, rh_u16 node, rh_u16 firmware);
+
+/**
+ * @brief Send HEALTH now, as robohub_transport_report_health described it.
+ *
+ * ROBOHUB_ERR_STATE when the link does not report health, or an authenticated
+ * link has no session yet.
+ */
+RoboHubError robohub_transport_send_health(RoboHubTransport* transport);
+
+/**
+ * @brief Write a HEALTH payload: the core's health, the device and firmware.
+ *
+ * `out` holds RH_TRANSPORT_HEALTH_SIZE bytes. The layout is robohub-protocol's
+ * `Health` message, written here so the link needs no generated code.
+ */
+void robohub_transport_health_payload(rh_u16 area, rh_u16 node, rh_u16 firmware,
+                                      rh_u8 out[RH_TRANSPORT_HEALTH_SIZE]);
 
 #ifdef __cplusplus
 }

@@ -33,3 +33,7 @@ The frame check is Fletcher-16, and the header's `@brief`, the documentation, th
 ## [0.4.3] - 2026-11-20
 
 The build finds the modules it needs inside the robohub-node collection (robohub-core in `core/`, robohub-transport in `link/`, robohub-telemetry in `telemetry/`), and fetches robohub-node, never the archived repositories, when it is built outside a workspace. It found them only as sibling repositories, so once those were archived a build fetched their last state from GitHub.
+
+## [0.5.0] - 2026-11-20
+
+The link reports the board's health (RNODE-HEALTH-0004): `robohub_transport_report_health(transport, area, node, firmware)` makes it send `HEALTH` (0x0403) once per boot — on an authenticated link the moment the gateway's SESSION is accepted, on a plain link at once (or before the next frame if that write failed) — and again whenever a `DIAG_REQUEST` arrives; the payload is the node core's health in robohub-protocol's `Health` layout (`robohub_transport_health_payload`). Tested on a plain link and through a real handshake on a sealed one.

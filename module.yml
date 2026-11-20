@@ -21,7 +21,7 @@ module:
   name: robohub-node
   id: robohub.collection.node
   type: collection
-  version: 0.2.0
+  version: 0.3.0
   license: "MIT"
   description: >
     The node operating environment for the RoboHub Platform: an application

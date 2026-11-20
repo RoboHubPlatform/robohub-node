@@ -11,6 +11,7 @@
 #include "keystore_double.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 #define TEST_EVENT ((robohub_event_id)0x1234u)
@@ -154,6 +155,122 @@ static RoboHubError on_reset(robohub_event_id id, const void* payload, rh_size s
     (void)id; (void)payload; (void)size; (void)user;
     resets_seen++;
     return ROBOHUB_OK;
+}
+
+/* ---- HEALTH, once per boot and on request (RNODE-HEALTH-0004) ------------ */
+
+static int healths;
+static rh_u16 health_tx;
+static rh_size health_len;
+static rh_u8 health_seen[64];
+static RoboHubError on_health(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id; (void)user;
+    healths++;
+    health_tx = robohub_core_event_current_tx();
+    health_len = size;
+    assert(size <= sizeof(health_seen));
+    memcpy(health_seen, payload, size);
+    return ROBOHUB_OK;
+}
+
+static int order_seen[8];
+static int order_count;
+static RoboHubError on_order_health(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id; (void)payload; (void)size; (void)user;
+    if (order_count < 8) order_seen[order_count++] = 1;
+    return ROBOHUB_OK;
+}
+static RoboHubError on_order_reading(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id; (void)payload; (void)size; (void)user;
+    if (order_count < 8) order_seen[order_count++] = 2;
+    return ROBOHUB_OK;
+}
+
+/* The payload as robohub-protocol's Health lays it out, with the core's health
+ * as a program with no runtime has it: reason unknown, boot 0, no fault. */
+static void check_health_payload(const rh_u8* p, rh_u16 area, rh_u16 node, rh_u16 firmware)
+{
+    assert(p[0] == 1u && p[1] == 1u);
+    assert((rh_u16)(p[2] | (p[3] << 8)) == area && (rh_u16)(p[4] | (p[5] << 8)) == node);
+    for (int i = 6; i < 18; i++) assert(p[i] == 0u);       /* reason, boot count, fault code */
+    assert(p[18] == 0xFFu && p[19] == 0xFFu);              /* no task */
+    for (int i = 20; i < 28; i++) assert(p[i] == 0u);      /* pc, uptime */
+    assert((rh_u16)(p[28] | (p[29] << 8)) == firmware);
+}
+
+#define TEST_READING ((robohub_event_id)0x0204u)
+
+// @verifies RNODE-HEALTH-0004
+static void check_health(void)
+{
+    const rh_u8 reading[3] = { 1, 2, 3 };
+
+    /* A plain link: the health goes out at once, and only once; a DIAG_REQUEST
+     * asks for it again. */
+    {
+        RoboHubTransport gateway_end, board;
+        const RoboHubTransportPhy to_gateway = { .write = forward_write, .context = &gateway_end };
+        const RoboHubTransportPhy to_board = { .write = forward_write, .context = &board };
+        assert(robohub_transport_init(&gateway_end, &to_board) == ROBOHUB_OK);
+        assert(robohub_transport_init(&board, &to_gateway) == ROBOHUB_OK);
+        assert(robohub_core_event_subscribe((robohub_event_id)RH_TRANSPORT_MSG_HEALTH, on_order_health, 0) == ROBOHUB_OK);
+        assert(robohub_core_event_subscribe(TEST_READING, on_order_reading, 0) == ROBOHUB_OK);
+        assert(robohub_core_event_subscribe((robohub_event_id)RH_TRANSPORT_MSG_HEALTH, on_health, 0) == ROBOHUB_OK);
+
+        assert(robohub_transport_send_health(&board) == ROBOHUB_ERR_STATE);   /* not asked to report */
+        assert(robohub_transport_report_health(&board, 7u, 20u, 9u) == ROBOHUB_OK);
+        assert(healths == 1 && board.health_sent);                          /* at once */
+        assert(robohub_transport_send(&board, TEST_READING, 0u, reading, 3u) == ROBOHUB_OK);
+        assert(robohub_transport_send(&board, TEST_READING, 0u, reading, 3u) == ROBOHUB_OK);
+        assert(healths == 1 && health_len == RH_TRANSPORT_HEALTH_SIZE && health_tx == 0u);
+        assert(order_count == 3 && order_seen[0] == 1 && order_seen[1] == 2 && order_seen[2] == 2);
+        check_health_payload(health_seen, 7u, 20u, 9u);
+
+        const rh_u8 diag[9] = { 1, 1, 7, 0, 20, 0, 0, 0, 0 };
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)RH_TRANSPORT_MSG_DIAG_REQUEST, 3u, diag, 9u) == ROBOHUB_OK);
+        assert(healths == 2);
+        check_health_payload(health_seen, 7u, 20u, 9u);
+    }
+
+    /* An authenticated link: nothing before the session; the health goes out,
+     * sealed, the moment the gateway's SESSION is accepted, and once. */
+    {
+        RoboHubTransport gateway_end, board;
+        const RoboHubTransportPhy to_gateway = { .write = forward_write, .context = &gateway_end };
+        const RoboHubTransportPhy to_board = { .write = forward_write, .context = &board };
+        assert(robohub_transport_init(&gateway_end, &to_board) == ROBOHUB_OK);
+        assert(robohub_transport_init(&board, &to_gateway) == ROBOHUB_OK);
+        const rh_u8 uid[8] = { 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8 };
+        const rh_u8 k_dev[16] = { 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87, 0x98, 0xA9, 0xBA, 0xCB, 0xDC, 0xED, 0xFE, 0x0F, 0x10 };
+        RoboHubSecure secure;
+        assert(robohub_secure_init(&secure, uid, k_dev, test_nonce, test_now) == ROBOHUB_OK);
+        assert(robohub_transport_secure(&board, &secure) == ROBOHUB_OK);
+        assert(robohub_core_event_subscribe((robohub_event_id)(RH_TRANSPORT_MSG_HEALTH | RH_SECURE_FLAG), on_health, 0) == ROBOHUB_OK);
+        assert(robohub_transport_report_health(&board, 7u, 21u, 4u) == ROBOHUB_OK);
+
+        int before = healths;
+        now_ms_value += 5000u;
+        assert(robohub_transport_send(&board, TEST_READING, 0u, reading, 3u) == ROBOHUB_ERR_STATE); /* says hello */
+        assert(healths == before && !board.health_sent);
+
+        /* Answered under the key the board holds: the keystore may hold one the
+         * REKEY above stored, which a board takes over the compiled-in one. */
+        rh_u8 session[RH_SECURE_SESSION_SIZE];
+        answer_hello(secure.device_key, hello_seen, session);
+        assert(robohub_transport_send(&gateway_end, (robohub_event_id)RH_SECURE_MSG_SESSION, 0u, session, (rh_u16)sizeof(session)) == ROBOHUB_OK);
+        assert(robohub_secure_ready(&secure));
+        assert(board.health_sent);
+        assert(healths == before + 1);
+        assert(health_len == 6u + RH_TRANSPORT_HEALTH_SIZE + 8u);   /* sealed: sid, counter, health, tag */
+        check_health_payload(health_seen + 6, 7u, 21u, 4u);
+
+        /* Readings after it carry no second report. */
+        assert(robohub_transport_send(&board, TEST_READING, 0u, reading, 3u) == ROBOHUB_OK);
+        assert(healths == before + 1);
+    }
 }
 
 int main(void)
@@ -390,5 +507,6 @@ int main(void)
         assert(robohub_secure_ready(&secure));
     }
 
+    check_health();
     return 0;
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.0] - 2026-11-20
+
+The link reports `HEALTH` itself (link 0.5.0, RNODE-HEALTH-0004), so any board with the link chosen reports its health — not only one built on the device node. device-node 0.2.1 hands its report to the link: one implementation, the same behaviour, its tests now passing through the link's.
+
 ## [0.2.0] - 2026-11-20
 
 Phase 2a — health (RNODE-HEALTH-0001..0005, ADR-0002; robohub ADR-0021):

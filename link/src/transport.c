@@ -13,6 +13,7 @@
 
 #include "robohub/transport.h"
 #include "robohub/core/event.h"
+#include "robohub/core/health.h"
 
 #include <string.h>
 
@@ -141,6 +142,9 @@ RoboHubError robohub_transport_init(RoboHubTransport* transport,
  * said less than RH_TRANSPORT_HELLO_RETRY_MS ago. */
 static void transport_hello(RoboHubTransport* transport);
 
+/* HEALTH once per boot, when the link can send it. */
+static void transport_health_once(RoboHubTransport* transport);
+
 /* A frame that just finished is decoded, checked and, if it passes, published.
  * Anything wrong with it is counted and dropped: a stream has no way to ask for
  * the bytes again, and a half-frame is not worth keeping. */
@@ -178,7 +182,9 @@ static void transport_deliver(RoboHubTransport* transport)
         /* An authenticated link accepts the gateway's answer to its hello and
          * frames that open under the session, and nothing else. */
         if (msg_id == RH_SECURE_MSG_SESSION) {
-            (void)robohub_secure_accept(transport->secure, payload, length);
+            if (robohub_secure_accept(transport->secure, payload, length) == ROBOHUB_OK) {
+                transport_health_once(transport);
+            }
             return;
         }
         const rh_u8* inner = 0;
@@ -216,6 +222,11 @@ static void transport_deliver(RoboHubTransport* transport)
     }
 
     transport->rx_packets++;
+    /* A diagnostic request asks for the health again (PROTO-0007); it still
+     * goes on to whoever else answers it. */
+    if (msg_id == RH_TRANSPORT_MSG_DIAG_REQUEST && transport->health_on) {
+        (void)robohub_transport_send_health(transport);
+    }
     if (transport->on_frame != 0 &&
         transport->on_frame(msg_id, tx_id, payload, length, transport->on_frame_user) != 0) {
         return;
@@ -297,6 +308,10 @@ RoboHubError robohub_transport_send(RoboHubTransport* transport,
     }
     RoboHubSecure* secure = transport->secure;
     if (secure == 0) {
+        /* A plain link has no session to wait for: the health goes first. */
+        if ((rh_u16)msg_id != RH_TRANSPORT_MSG_HEALTH) {
+            transport_health_once(transport);
+        }
         return transport_write(transport, (rh_u16)msg_id, tx_id, payload, payload_len);
     }
     if (!robohub_secure_ready(secure)) {
@@ -360,4 +375,89 @@ static RoboHubError transport_write(RoboHubTransport* transport, rh_u16 msg_id, 
     }
     transport->tx_packets++;
     return ROBOHUB_OK;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Health (RNODE-HEALTH-0004, robohub-protocol PROTO-0007)                    */
+/* -------------------------------------------------------------------------- */
+
+static void put_u32_le(rh_u8* out, rh_u32 value)
+{
+    out[0] = (rh_u8)value;
+    out[1] = (rh_u8)(value >> 8);
+    out[2] = (rh_u8)(value >> 16);
+    out[3] = (rh_u8)(value >> 24);
+}
+
+// @req RNODE-HEALTH-0004
+void robohub_transport_health_payload(rh_u16 area, rh_u16 node, rh_u16 firmware,
+                                      rh_u8 out[RH_TRANSPORT_HEALTH_SIZE])
+{
+    robohub_core_health health;
+    robohub_core_health_get(&health);
+    rh_bool fault = health.has_fault;
+    out[0] = 1u;                       /* Health, version 1 */
+    out[1] = 1u;                       /* DeviceId, version 1 */
+    out[2] = (rh_u8)area;
+    out[3] = (rh_u8)(area >> 8);
+    out[4] = (rh_u8)node;
+    out[5] = (rh_u8)(node >> 8);
+    put_u32_le(&out[6], (rh_u32)health.reset_reason);
+    put_u32_le(&out[10], health.boot_count);
+    put_u32_le(&out[14], fault ? health.fault.code : 0u);
+    rh_u16 task = fault ? health.fault.task : (rh_u16)RH_HEALTH_NO_TASK;
+    out[18] = (rh_u8)task;
+    out[19] = (rh_u8)(task >> 8);
+    put_u32_le(&out[20], fault ? health.fault.pc : 0u);
+    put_u32_le(&out[24], fault ? health.fault.uptime_ms : 0u);
+    out[28] = (rh_u8)firmware;
+    out[29] = (rh_u8)(firmware >> 8);
+}
+
+// @req RNODE-HEALTH-0004
+RoboHubError robohub_transport_report_health(RoboHubTransport* transport,
+                                             rh_u16 area, rh_u16 node, rh_u16 firmware)
+{
+    if (transport == 0) {
+        return ROBOHUB_ERR_INVALID_ARG;
+    }
+    transport->health_on = RH_TRUE;
+    transport->health_area = area;
+    transport->health_node = node;
+    transport->health_firmware = firmware;
+    /* A plain link has no session to wait for, and one whose session is
+     * already up has waited: either reports now. A write that fails (a network
+     * not up yet) leaves it for the first frame sent. */
+    if (transport->secure == 0 || robohub_secure_ready(transport->secure)) {
+        transport_health_once(transport);
+    }
+    return ROBOHUB_OK;
+}
+
+// @req RNODE-HEALTH-0004
+RoboHubError robohub_transport_send_health(RoboHubTransport* transport)
+{
+    if (transport == 0 || !transport->health_on) {
+        return ROBOHUB_ERR_STATE;
+    }
+    if (transport->secure != 0 && !robohub_secure_ready(transport->secure)) {
+        return ROBOHUB_ERR_STATE;
+    }
+    rh_u8 payload[RH_TRANSPORT_HEALTH_SIZE];
+    robohub_transport_health_payload(transport->health_area, transport->health_node,
+                                     transport->health_firmware, payload);
+    return robohub_transport_send(transport, RH_TRANSPORT_MSG_HEALTH, 0u, payload,
+                                  (rh_u16)sizeof(payload));
+}
+
+static void transport_health_once(RoboHubTransport* transport)
+{
+    if (!transport->health_on || transport->health_sent) {
+        return;
+    }
+    /* Marked first: the send below goes through robohub_transport_send. */
+    transport->health_sent = RH_TRUE;
+    if (robohub_transport_send_health(transport) != ROBOHUB_OK) {
+        transport->health_sent = RH_FALSE;
+    }
 }

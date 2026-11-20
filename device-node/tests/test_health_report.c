@@ -67,7 +67,7 @@ int main(void)
 
     (void)robohub_device_node_run(&node);
     assert(passes == 60 && diag_sent_at == 20);
-    assert(node.health_sent);
+    assert(node.transport.health_sent);
 
     static fx_frame frames[256];
     int count = fx_frames(frames, 256);
