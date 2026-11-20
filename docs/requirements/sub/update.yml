@@ -81,7 +81,9 @@ requirements:
       the board's security version to the manifest's — only when its link session
       is up and the core has fed the watchdog continuously for 30 s, then report
       `confirmed`; when the platform says the last image booted once was rolled
-      back, it shall report `rolled back` once its session is up.
+      back, it shall report `rolled back` once its session is up; and an offer of
+      an update it has reported as confirmed or rolled back shall be answered
+      with that outcome again, not started again.
     rationale: An image that hangs or cannot reach its gateway must not be kept, and the person must hear which happened (robohub ADR-0022, 6).
     satisfies: [RNODE-0012, RNODE-0008]
     decided_by: [ADR-0003, robohub:ADR-0022]
@@ -122,3 +124,19 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [updates, tests]
+
+  - id: RNODE-UPD-0008
+    title: An image on trial gives up after five minutes
+    statement: >
+      When an image booted once has not been confirmed within 5 minutes of its
+      start (`CONFIG_RH_UPDATE_TRIAL_MS`), the managed layer shall give it up
+      through the slot contract (`rh_update_reject()`), so the board restarts into
+      the image it ran before and reports rolled back from there.
+    rationale: An image that runs and keeps its tasks on time but cannot reach its gateway must not stay on trial, out of contact (robohub ADR-0023, 4).
+    satisfies: [RNODE-0012]
+    decided_by: [robohub:ADR-0023]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, safety]

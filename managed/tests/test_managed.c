@@ -47,6 +47,7 @@ static rh_update_outcome slot_outcome = RH_UPDATE_NONE;
 static rh_update_info outcome_info;
 static uint32_t slot_security = 5u;
 static int confirms;
+static int rejects;
 
 void rh_update_caps_get(rh_update_caps* caps)
 {
@@ -90,6 +91,15 @@ RoboHubError rh_update_confirm(void)
     slot_pending = false;
     if (pending_info.security_version > slot_security) slot_security = pending_info.security_version;
     slot_outcome = RH_UPDATE_KEPT;
+    outcome_info = pending_info;
+    return ROBOHUB_OK;
+}
+RoboHubError rh_update_reject(void)
+{
+    if (!slot_pending) return ROBOHUB_ERR_STATE;
+    rejects++;
+    slot_pending = false;               /* a real board restarts here */
+    slot_outcome = RH_UPDATE_ROLLED_BACK;
     outcome_info = pending_info;
     return ROBOHUB_OK;
 }
@@ -187,6 +197,12 @@ static void cancel(rh_u32 id)
     assert(robohub_transport_send(&gw, RH_MANAGED_MSG_CANCEL, 0u, c, (rh_u16)sizeof c) == ROBOHUB_OK);
 }
 
+static RoboHubError stuck_task(robohub_core_task_id id, void* user)
+{
+    (void)id; (void)user;
+    return ROBOHUB_OK;
+}
+
 static void expect(rh_u32 id, rh_u32 state, rh_u32 reason, rh_u32 next, const char* what)
 {
     if (last.id != id || last.state != state || last.reason != reason || last.next != next) {
@@ -223,7 +239,7 @@ static void rfc8032(void)
     assert(memcmp(derived, want_pub, 32) == 0);
 }
 
-// @verifies RNODE-UPD-0001, RNODE-UPD-0002, RNODE-UPD-0003, RNODE-UPD-0004, RNODE-UPD-0005, RNODE-UPD-0006, RNODE-UPD-0007
+// @verifies RNODE-UPD-0001, RNODE-UPD-0002, RNODE-UPD-0003, RNODE-UPD-0004, RNODE-UPD-0005, RNODE-UPD-0006, RNODE-UPD-0007, RNODE-UPD-0008
 int main(void)
 {
     rfc8032();
@@ -332,13 +348,17 @@ int main(void)
     rh_u32 since = h.on_time_since_ms;
     robohub_managed_poll(since + 29999u);
     assert(confirms == 0);
+    before = statuses;
     robohub_managed_poll(since + 30000u);
     assert(confirms == 1 && slot_security == 8u);
-    before = statuses;
-    robohub_managed_poll(since + 31000u);
+    /* Said in the same poll: no offer in between finds it neither pending nor ended. */
     expect(77u, RH_UPDATE_STATE_CONFIRMED, RH_UPDATE_REASON_NONE, 0u, "confirmed");
+    robohub_managed_poll(since + 31000u);
     robohub_managed_poll(since + 32000u);
     assert(statuses == before + 1);                    /* said once */
+    /* Offered again — the gateway did not hear it: told again, not started. */
+    offer(77u, board_uid, 8u, sizeof image, 192u, digest, secret, RH_MANAGED_OFFER_SIZE);
+    expect(77u, RH_UPDATE_STATE_CONFIRMED, RH_UPDATE_REASON_NONE, 0u, "an ended update offered again says how it ended");
 
     /* A boot after an image that was not kept: rolled back, said once. */
     slot_outcome = RH_UPDATE_ROLLED_BACK;
@@ -346,9 +366,33 @@ int main(void)
     assert(robohub_managed_init(&config) == ROBOHUB_OK);
     robohub_managed_poll(clock_ms);
     expect(78u, RH_UPDATE_STATE_ROLLED_BACK, RH_UPDATE_REASON_NONE, 0u, "rolled back");
+    offer(78u, board_uid, 9u, sizeof image, 192u, digest, secret, RH_MANAGED_OFFER_SIZE);
+    expect(78u, RH_UPDATE_STATE_ROLLED_BACK, RH_UPDATE_REASON_NONE, 0u, "and a rolled-back one offered again too");
     before = statuses;
     robohub_managed_poll(clock_ms + 1000u);
     assert(statuses == before);
+
+    /* On trial with its session never up: given up at five minutes, not before
+       (RNODE-UPD-0008). */
+    slot_pending = true;
+    pending_info = (rh_update_info){ 79u, 11u, 9u };
+    slot_outcome = RH_UPDATE_NONE;
+    assert(robohub_managed_init(&config) == ROBOHUB_OK);
+    /* Not healthy: a task that stopped running, so nothing confirms it. */
+    robohub_core_task_id stuck;
+    assert(robohub_core_task_add("stuck", stuck_task, 0, 10u, &stuck) == ROBOHUB_OK);
+    robohub_core_watchdog_service(clock_ms);
+    robohub_core_watchdog_service(clock_ms + 100000u);
+    robohub_core_health_get(&h);
+    assert(!h.on_time);
+    /* The clock counts from long before this boot: the trial counts from when
+       the layer first saw the image pending. */
+    robohub_managed_poll(clock_ms + 7000000u);
+    assert(rejects == 0 && slot_pending);
+    robohub_managed_poll(clock_ms + 7000000u + 299999u);
+    assert(rejects == 0 && slot_pending);
+    robohub_managed_poll(clock_ms + 7000000u + 300000u);
+    assert(rejects == 1 && !slot_pending);
 
     printf("managed layer: ok\n");
     return 0;

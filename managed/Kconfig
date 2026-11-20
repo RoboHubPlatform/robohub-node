@@ -19,6 +19,14 @@ config RH_UPDATE_CONFIRM_MS
       How long an image booted once must run with its session up and every
       task on time before it is confirmed.
 
+config RH_UPDATE_TRIAL_MS
+    int "Longest time an image stays on trial unconfirmed (ms)"
+    default 300000
+    help
+      An image booted once that is not confirmed within this time of its
+      start — its session never came up — is given up, and the board restarts
+      into the image it ran before (RNODE-UPD-0008).
+
 config RH_UPDATE_TIMEOUT_MS
     int "Time without a chunk before a transfer is dropped (ms)"
     default 60000

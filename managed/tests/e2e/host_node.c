@@ -13,6 +13,7 @@
  *
  *   RH_TEST_CONFIRM_MS the healthy time before an image is kept, short so the
  *                      test does not wait 30 s
+ *   RH_TEST_TRIAL_MS   the longest an image stays on trial unconfirmed
  *
  * @project RoboHub Platform
  * @license MIT
@@ -94,6 +95,7 @@ int main(void)
         .update_key = key,
         .firmware_version = (rh_u16)(firmware != 0 ? atoi(firmware) : 1),
         .confirm_ms = getenv("RH_TEST_CONFIRM_MS") != 0 ? (rh_u32)atoi(getenv("RH_TEST_CONFIRM_MS")) : 0u,
+        .trial_ms = getenv("RH_TEST_TRIAL_MS") != 0 ? (rh_u32)atoi(getenv("RH_TEST_TRIAL_MS")) : 0u,
     };
     (void)robohub_managed_init(&config);
     if (robohub_core_init(0) != ROBOHUB_OK) {

@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.0] - 2026-11-20
+
+- **managed 0.2.0**: an image on trial gives up after five minutes unconfirmed (`CONFIG_RH_UPDATE_TRIAL_MS`, RNODE-UPD-0008) through `rh_update_reject()`, counted from when the layer first sees it pending (a board's clock may count from long before this boot). The end to end test adds a fourth case: an image that cannot be healthy before its limit, given up and reported rolled back.
+
 ## [0.4.0] - 2026-11-20
 
 Phase 2b — firmware updates over the link (RNODE-UPD-0001…0007, ADR-0003; robohub ADR-0022):

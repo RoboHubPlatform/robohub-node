@@ -48,6 +48,13 @@
 #    define RH_UPDATE_TIMEOUT_MS 60000u
 #  endif
 #endif
+#ifndef RH_UPDATE_TRIAL_MS
+#  ifdef CONFIG_RH_UPDATE_TRIAL_MS
+#    define RH_UPDATE_TRIAL_MS CONFIG_RH_UPDATE_TRIAL_MS
+#  else
+#    define RH_UPDATE_TRIAL_MS 300000u
+#  endif
+#endif
 #ifndef RH_UPDATE_MAX_CHUNK
 #  ifdef CONFIG_RH_UPDATE_MAX_CHUNK
 #    define RH_UPDATE_MAX_CHUNK CONFIG_RH_UPDATE_MAX_CHUNK
@@ -81,6 +88,10 @@ static rh_u32 last_chunk_ms;
 static RoboHubSha256 hash;
 
 static rh_bool outcome_reported;
+static rh_u32 ended_id;         /* the last update reported as kept or rolled back */
+static rh_update_state ended_state;
+static rh_bool trial_seen;     /* the trial's start is known */
+static rh_u32 trial_since;     /* when this boot's layer first saw the image pending */
 static rh_u32 last_update_id;
 
 /* -------------------------------------------------------------------------- */
@@ -124,6 +135,9 @@ static RoboHubError send_status(rh_u32 update_id, rh_update_state state, rh_upda
     out[19] = slot < 0 ? 0xFFu : (rh_u8)slot;
     return robohub_transport_send(config.transport, RH_MANAGED_MSG_STATUS, 0u, out, (rh_u16)sizeof(out));
 }
+
+static void report_outcome(void);
+static rh_bool session_up(void);
 
 /* -------------------------------------------------------------------------- */
 /*  The offer                                                                 */
@@ -172,6 +186,7 @@ static RoboHubError on_offer(robohub_event_id id, const void* payload, rh_size s
     const rh_u8* signature = &p[1 + RH_MANAGED_MANIFEST_SIZE];
     manifest offer;
     parse_manifest(bytes, &offer);
+    report_outcome();   /* an outcome not yet said is said, and known, first */
 
     /* The same update offered again while it is received: the link was lost,
      * and the gateway resumes where the board says. */
@@ -199,6 +214,13 @@ static RoboHubError on_offer(robohub_event_id id, const void* payload, rh_size s
         refusal = RH_UPDATE_REASON_TOO_LARGE;
     } else if (receiving || rh_update_pending(0)) {
         refusal = RH_UPDATE_REASON_BUSY;
+    }
+    /* An update that has ended, offered again: the gateway did not hear how it
+     * ended (the report went while the link was down), so it is told again
+     * rather than started again (RNODE-UPD-0005). */
+    if ((refusal == RH_UPDATE_REASON_NONE || refusal == RH_UPDATE_REASON_DOWNGRADE ||
+         refusal == RH_UPDATE_REASON_BUSY) && ended_state != 0 && offer.update_id == ended_id) {
+        return send_status(ended_id, ended_state, RH_UPDATE_REASON_NONE, 0u);
     }
     if (refusal != RH_UPDATE_REASON_NONE) {
         return send_status(offer.update_id, RH_UPDATE_STATE_REFUSED, refusal, 0u);
@@ -308,7 +330,30 @@ static rh_bool session_up(void)
     return secure == 0 || robohub_secure_ready(secure);
 }
 
-// @req RNODE-UPD-0005, RNODE-UPD-0006
+/* The last update's outcome — kept or rolled back — taken from the platform and
+ * said once the session is up; afterwards an offer of that update is answered
+ * with it (RNODE-UPD-0005). */
+static void report_outcome(void)
+{
+    if (outcome_reported || !session_up() || rh_update_pending(0)) {
+        return;
+    }
+    rh_update_info done;
+    rh_update_outcome outcome = rh_update_take_outcome(&done);
+    if (outcome == RH_UPDATE_KEPT) {
+        ended_state = RH_UPDATE_STATE_CONFIRMED;
+    } else if (outcome == RH_UPDATE_ROLLED_BACK) {
+        ended_state = RH_UPDATE_STATE_ROLLED_BACK;
+    }
+    if (outcome != RH_UPDATE_NONE) {
+        ended_id = done.update_id;
+        last_update_id = done.update_id;
+        (void)send_status(ended_id, ended_state, RH_UPDATE_REASON_NONE, 0u);
+    }
+    outcome_reported = RH_TRUE;
+}
+
+// @req RNODE-UPD-0005, RNODE-UPD-0006, RNODE-UPD-0008
 void robohub_managed_poll(rh_u32 now)
 {
     if (!configured) {
@@ -323,25 +368,26 @@ void robohub_managed_poll(rh_u32 now)
         robohub_core_health_get(&health);
         if (session_up() && health.on_time && (rh_u32)(now - health.on_time_since_ms) >= (config.confirm_ms != 0u ? config.confirm_ms : RH_UPDATE_CONFIRM_MS) &&
             rh_update_confirm() == ROBOHUB_OK) {
-            /* Reported below, from the platform's outcome, so a report that
-             * cannot go out now goes out once the session is up. */
+            /* Said now, from the platform's outcome, so no offer in between
+             * finds it neither pending nor ended. */
             last_update_id = info.update_id;
+            report_outcome();
+            return;
+        }
+        /* Never confirmed within the limit — its session never came up: given
+         * up, and the board restarts into the image it ran before
+         * (RNODE-UPD-0008). Counted from when this boot's layer first saw it
+         * pending: a clock may count from the machine's start, not this boot's. */
+        if (!trial_seen) {
+            trial_seen = RH_TRUE;
+            trial_since = now;
+        }
+        if ((rh_u32)(now - trial_since) >= (config.trial_ms != 0u ? config.trial_ms : RH_UPDATE_TRIAL_MS)) {
+            (void)rh_update_reject();
         }
         return;
     }
-    if (!outcome_reported && session_up()) {
-        rh_update_info done;
-        rh_update_outcome outcome = rh_update_take_outcome(&done);
-        if (outcome == RH_UPDATE_KEPT) {
-            (void)send_status(done.update_id, RH_UPDATE_STATE_CONFIRMED, RH_UPDATE_REASON_NONE, 0u);
-        } else if (outcome == RH_UPDATE_ROLLED_BACK) {
-            (void)send_status(done.update_id, RH_UPDATE_STATE_ROLLED_BACK, RH_UPDATE_REASON_NONE, 0u);
-        }
-        if (outcome != RH_UPDATE_NONE) {
-            last_update_id = done.update_id;
-        }
-        outcome_reported = RH_TRUE;
-    }
+    report_outcome();
 }
 
 static RoboHubError managed_task(robohub_core_task_id id, void* user)
@@ -380,6 +426,9 @@ RoboHubError robohub_managed_init(const RoboHubManagedConfig* given)
     configured = RH_TRUE;
     drop_transfer();
     outcome_reported = RH_FALSE;
+    trial_seen = RH_FALSE;
+    ended_id = 0u;
+    ended_state = (rh_update_state)0;
     if (registered) {
         return ROBOHUB_OK; /* given again: the new configuration, one application */
     }

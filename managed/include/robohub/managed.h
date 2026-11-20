@@ -15,7 +15,8 @@
  *   last chunk     the SHA-256 is compared, `verified` answered, the slot booted
  *                  once (robohub/update_slot.h)
  *   next boot      confirmed once the link's session is up and every task has
- *                  kept its time for 30 s; `confirmed` or `rolled back` reported
+ *                  kept its time for 30 s; given up after 5 min unconfirmed;
+ *                  `confirmed` or `rolled back` reported
  *   UPDATE_CANCEL  or 60 s without a chunk: the transfer is dropped, `failed`
  *
  * One update at a time, its state in RAM: a reset during a transfer drops it.
@@ -96,6 +97,9 @@ typedef struct {
     /** How long an image on trial must be healthy before it is kept, in ms;
      *  0 for RH_UPDATE_CONFIRM_MS (30 s). */
     rh_u32 confirm_ms;
+    /** How long an image may stay on trial unconfirmed before it is given up
+     *  (rh_update_reject), in ms from boot; 0 for RH_UPDATE_TRIAL_MS (5 min). */
+    rh_u32 trial_ms;
 } RoboHubManagedConfig;
 
 /** Where the layer stands, for a test or a diagnostic page. */

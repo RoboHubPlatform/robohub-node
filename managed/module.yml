@@ -11,7 +11,7 @@ module:
   name: robohub-managed
   id: robohub.runtime.managed
   type: runtime
-  version: 0.1.0
+  version: 0.2.0
   description: >
     The managed layer: takes firmware updates over the link — a signed
     manifest, the image in chunks to the inactive slot, booted once and kept

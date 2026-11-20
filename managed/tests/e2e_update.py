@@ -18,7 +18,9 @@ The image is the host node's own executable, so the image on trial is real code.
      started again, runs the image on trial and confirms it — reports confirmed;
   2. a downgrade (security version 0 after 1) is refused;
   3. update 101: verified; its trial crashes before confirming; the next start
-     goes back to update 100's image and reports rolled back.
+     goes back to update 100's image and reports rolled back;
+  4. update 103: verified; its trial cannot become healthy long enough before
+     its trial limit, so it is given up and the old image reports rolled back.
 
     python3 e2e_update.py path/to/robohub-managed-host-node
 """
@@ -287,6 +289,21 @@ def main():
         s = board.wait_status(lambda s: s[0] == 101 and s[1] in (CONFIRMED, ROLLED_BACK), timeout=15)
         check(s is not None and s[1] == ROLLED_BACK and s[5] == 1,
               f"the next start goes back to slot 1 and says rolled back ({s})")
+
+        # 4. An update given up at its trial limit (RNODE-UPD-0008, COMM-0014).
+        board.send(OFFER, offer_payload(key, 103, image, 1))
+        s = board.wait_status(lambda s: s[0] == 103)
+        check(s is not None and s[1] == ACCEPTED, f"update 103 is accepted ({s})")
+        done = send_image(board, 103, image, key=key)
+        check(done is not None and done[1] == VERIFIED, f"update 103 is verified ({done})")
+        check(board.wait_exit(10) == 75, "the board ends to boot it once")
+        board.start(RH_TEST_FIRMWARE="4", RH_TEST_CONFIRM_MS="600000", RH_TEST_TRIAL_MS="3000")
+        code = board.wait_exit(15)
+        check(code == 75, f"its trial is given up at the limit, and the board ends to start the old image ({code})")
+        board.start(RH_TEST_FIRMWARE="2", RH_TEST_CONFIRM_MS=None, RH_TEST_TRIAL_MS=None)
+        s = board.wait_status(lambda s: s[0] == 103 and s[1] in (CONFIRMED, ROLLED_BACK), timeout=15)
+        check(s is not None and s[1] == ROLLED_BACK and s[5] == 1,
+              f"the old image runs again and says rolled back ({s})")
     finally:
         board.stop()
         if failures:
@@ -295,7 +312,7 @@ def main():
     if failures:
         print("FAILED:", *failures, sep="\n  ")
         return 1
-    print("OK: a Linux host board updated over its link, confirmed, refused a downgrade, rolled back a crash")
+    print("OK: a Linux host board updated over its link, confirmed, refused a downgrade, rolled back a crash and a trial that ran out")
     return 0
 
 

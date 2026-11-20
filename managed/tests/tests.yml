@@ -6,7 +6,7 @@
 # (e2e_update.py, skipped where robohub-linux or python's cryptography is absent).
 name: robohub-managed
 suites:
-  # @verifies RNODE-UPD-0001, RNODE-UPD-0002, RNODE-UPD-0003, RNODE-UPD-0004, RNODE-UPD-0005, RNODE-UPD-0006, RNODE-UPD-0007, PROTO-0008
+  # @verifies RNODE-UPD-0001, RNODE-UPD-0002, RNODE-UPD-0003, RNODE-UPD-0004, RNODE-UPD-0005, RNODE-UPD-0006, RNODE-UPD-0007, RNODE-UPD-0008, PROTO-0008
   - name: unit
     kind: ctest
     tags: [unit, host]
