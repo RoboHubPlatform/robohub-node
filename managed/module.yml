@@ -1,0 +1,83 @@
+#
+# robohub-managed — the managed layer of robohub-node: firmware updates over the
+# link, from an Ed25519-signed manifest to an image confirmed once the board is
+# healthy (RNODE-UPD-0001…0007; robohub ADR-0022; this collection's ADR-0003).
+#
+# @project RoboHub Platform
+# @license MIT
+#
+
+module:
+  name: robohub-managed
+  id: robohub.runtime.managed
+  type: runtime
+  version: 0.1.0
+  description: >
+    The managed layer: takes firmware updates over the link — a signed
+    manifest, the image in chunks to the inactive slot, booted once and kept
+    only when the board is healthy.
+
+  maintainer: "Aurel Miron"
+  license: "MIT"
+  created: "2026-11-20"
+
+# Its requirements are the collection's, RNODE-UPD-NNNN, in
+# robohub-node/docs/requirements/sub/update.yml (as device-node's are RNODE-DEV).
+
+build:
+  language: c
+  standard: c11
+  include_dirs:
+    - include/
+    - vendor/monocypher/
+  sources:
+    - src/managed.c
+    - vendor/monocypher/monocypher.c
+    - vendor/monocypher/monocypher-ed25519.c
+
+depends:
+  - name: robohub-common
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-common
+    git: https://github.com/RoboHubPlatform/robohub-common
+    branch: main
+  - name: robohub-core
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/core
+  - name: robohub-transport
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/link
+
+config:
+  dialect: linux
+  kconfig_fragments:
+    - Kconfig
+
+exports:
+  headers:
+    - robohub/managed.h
+  cmake:
+    target: "rho::robohub-managed"
+    include_dirs:
+      - include
+    link_libraries:
+      - rho::robohub-common
+      - rho::robohub-core
+      - rho::robohub-transport
+
+testing:
+  host_tests:
+    enabled: true
+    target_constraint: "native"
+
+package:
+  kind: library
+  binary: false
+
+metadata:
+  tags:
+    - runtime
+    - updates
+    - managed
+  stability: experimental
+  visibility: public

@@ -219,6 +219,10 @@ static void nothing_started(void)
     rh_u32 before = feeds;
     robohub_core_watchdog_service(clock_ms);
     assert(feeds == before);
+    /* With no watchdog running, whether the tasks keep their time is still kept:
+       the managed layer's "healthy" (RNODE-UPD-0005). */
+    robohub_core_health_get(&h);
+    assert(h.on_time && h.on_time_since_ms <= clock_ms);
 
     robohub_core_watchdog_configure(8000u);
     wd_present = RH_FALSE;

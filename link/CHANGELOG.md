@@ -37,3 +37,7 @@ The build finds the modules it needs inside the robohub-node collection (robohub
 ## [0.5.0] - 2026-11-20
 
 The link reports the board's health (RNODE-HEALTH-0004): `robohub_transport_report_health(transport, area, node, firmware)` makes it send `HEALTH` (0x0403) once per boot — on an authenticated link the moment the gateway's SESSION is accepted, on a plain link at once (or before the next frame if that write failed) — and again whenever a `DIAG_REQUEST` arrives; the payload is the node core's health in robohub-protocol's `Health` layout (`robohub_transport_health_payload`). Tested on a plain link and through a real handshake on a sealed one.
+
+## [0.6.0] - 2026-11-20
+
+The SHA-256 sealing is built on is public (`RoboHubSha256`, `robohub_sha256_init/update/final` in `robohub/secure.h`), so the managed layer hashes an update image as its chunks arrive without a second copy of it.

@@ -11,7 +11,7 @@ application opts into:
 | link | a secure byte link to a parent | yes |
 | telemetry | signals published to sinks, decimated, buffered across an outage | yes, or a local sink |
 | device node | equipment behind a board | yes |
-| managed | identity, signed updates, health — run from the installation's edge | yes |
+| managed | signed firmware updates over the link, confirmed once healthy (`managed/`) | yes |
 | kernel adapters | bare metal, FreeRTOS, later Zephyr | — |
 
 It builds on robohub-common's contracts and on nothing platform-specific. A board
@@ -32,3 +32,12 @@ fed only while every task keeps its allowance (`CONFIG_RH_CORE_WATCHDOG_MS`,
 board reports it once per boot in `HEALTH`. The requirements are
 `docs/requirements/sub/health.yml` (RNODE-HEALTH-0001…0005), the decision
 `docs/architecture/adr/0002-*`, and robohub ADR-0021 for the whole of Phase 2.
+
+**Phase 2b — updates over the link.** The managed layer (`managed/`,
+`CONFIG_RH_NODE_MANAGED`) takes an Ed25519-signed manifest, the image in chunks
+to the inactive slot with up to four in flight, checks its SHA-256, boots it once
+and keeps it only once the session is up and every task has kept its time for
+30 s (`docs/requirements/sub/update.yml`, RNODE-UPD-0001…0007;
+`docs/architecture/adr/0003-*`; robohub ADR-0022). It is tested on a fake board
+and end to end on a Linux host board with robohub-linux's file slot. The chips'
+own slots are Phase 2c (Pico 2 W) and 2d (ESP32).

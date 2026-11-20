@@ -15,7 +15,7 @@ module:
   previous_ids:
     - robohub-transport
   type: runtime
-  version: 0.5.0
+  version: 0.6.0
   description: >
     COBS framing with a Fletcher-16 integrity check and a byte-at-a-time parser,
     over any physical byte stream, publishing validated frames on the event bus.

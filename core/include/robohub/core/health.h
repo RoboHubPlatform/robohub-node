@@ -47,6 +47,10 @@ typedef struct {
     rh_u32 watchdog_feeds;
     /** The task that last kept the loop from feeding it, or RH_CORE_TASK_INVALID. */
     robohub_core_task_id late_task;
+    /** Every task is within its allowance now — kept whether or not a watchdog runs. */
+    rh_bool on_time;
+    /** Since when, in uptime milliseconds, every task has been within it. */
+    rh_u32 on_time_since_ms;
 } robohub_core_health;
 
 /** The health as the runtime holds it. Zero before robohub_core_init. */

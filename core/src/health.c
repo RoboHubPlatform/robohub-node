@@ -33,6 +33,8 @@ void robohub_core_health_reset(void)
     state.watchdog_ms = 0u;
     state.watchdog_feeds = 0u;
     state.late_task = RH_CORE_TASK_INVALID;
+    state.on_time = RH_FALSE;
+    state.on_time_since_ms = 0u;
 }
 
 /* Before any application's init: take the record before anything can write
@@ -70,12 +72,23 @@ void robohub_core_watchdog_begin(void)
 // @req RNODE-HEALTH-0001
 void robohub_core_watchdog_service(rh_u32 now_ms)
 {
-    if (state.watchdog_ms == 0u) {
-        return;
-    }
-    robohub_core_task_id late = robohub_core_scheduler_late_task(now_ms, state.watchdog_ms);
+    /* Whether every task keeps its time is kept on a board with no watchdog too:
+       it is what "healthy" means to the managed layer (RNODE-UPD-0005). The
+       allowance is counted against the watchdog's period, or the configured
+       one when none runs. */
+    rh_u32 period = state.watchdog_ms != 0u ? state.watchdog_ms
+                  : (configured_ms != 0u ? configured_ms : 8000u);
+    robohub_core_task_id late = robohub_core_scheduler_late_task(now_ms, period);
     if (late != RH_CORE_TASK_INVALID) {
         state.late_task = late;
+        state.on_time = RH_FALSE;
+        return;
+    }
+    if (!state.on_time) {
+        state.on_time = RH_TRUE;
+        state.on_time_since_ms = now_ms;
+    }
+    if (state.watchdog_ms == 0u) {
         return;
     }
     rh_watchdog_feed();

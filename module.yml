@@ -21,7 +21,7 @@ module:
   name: robohub-node
   id: robohub.collection.node
   type: collection
-  version: 0.3.0
+  version: 0.4.0
   license: "MIT"
   description: >
     The node operating environment for the RoboHub Platform: an application
@@ -45,6 +45,7 @@ modules:
   - link
   - telemetry
   - device-node
+  - managed
   - kernels/freertos
 
 docs:

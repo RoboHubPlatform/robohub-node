@@ -142,5 +142,5 @@ rh_bool robohub_core_running(void)
 
 const char* robohub_core_version(void)
 {
-    return "0.2.0";
+    return "0.3.0";
 }

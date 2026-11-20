@@ -19,13 +19,9 @@
 /*  SHA-256                                                                   */
 /* -------------------------------------------------------------------------- */
 
-typedef struct {
-    rh_u32 state[8];
-    rh_u32 bits_low;
-    rh_u32 bits_high;
-    rh_u8 block[64];
-    rh_size used;
-} rh_sha256;
+/* The state is the public RoboHubSha256 (secure.h), so a caller can hash in
+ * pieces — the managed layer hashes an image as its chunks arrive. */
+typedef RoboHubSha256 rh_sha256;
 
 static const rh_u32 rh_sha256_k[64] = {
     0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
@@ -114,6 +110,22 @@ static void rh_sha256_final(rh_sha256* c, rh_u8 out[32])
         out[4u * i + 2u] = (rh_u8)(c->state[i] >> 8);
         out[4u * i + 3u] = (rh_u8)c->state[i];
     }
+}
+
+// @req RNODE-UPD-0004
+void robohub_sha256_init(RoboHubSha256* sha)
+{
+    rh_sha256_init(sha);
+}
+
+void robohub_sha256_update(RoboHubSha256* sha, const rh_u8* data, rh_size length)
+{
+    rh_sha256_update(sha, data, length);
+}
+
+void robohub_sha256_final(RoboHubSha256* sha, rh_u8 out[32])
+{
+    rh_sha256_final(sha, out);
 }
 
 /* -------------------------------------------------------------------------- */

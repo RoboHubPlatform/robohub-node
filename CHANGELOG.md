@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0] - 2026-11-20
+
+Phase 2b — firmware updates over the link (RNODE-UPD-0001…0007, ADR-0003; robohub ADR-0022):
+
+- **managed 0.1.0**, a new module: takes `UPDATE_OFFER` (an Ed25519-signed manifest, checked with a vendored Monocypher 4.0.2 against the mesh's update key), refuses what is unsigned, for another board, a downgrade, too large or not updatable; writes `UPDATE_CHUNK`s in order to the inactive slot with up to four in flight, hashing as it goes and answering the next index it expects; resumes after a lost link; checks the SHA-256, says `verified` and boots the image once; confirms it once the session is up and every task has kept its time for 30 s, and reports `confirmed` or `rolled back`; drops a cancelled or silent transfer. Tested on a fake board, and end to end on a Linux host board through robohub-linux's file slot, with a lost chunk, a cut link, a refused downgrade and a crash rolled back.
+- **core 0.3.0**: whether every task keeps its time is kept on a board without a watchdog too (`on_time`, `on_time_since_ms` in `robohub/core/health.h`) — the managed layer's "healthy".
+- **link 0.6.0**: its SHA-256 is public.
+- `NOTICE.md` names the vendored code.
+
 ## [0.3.0] - 2026-11-20
 
 The link reports `HEALTH` itself (link 0.5.0, RNODE-HEALTH-0004), so any board with the link chosen reports its health — not only one built on the device node. device-node 0.2.1 hands its report to the link: one implementation, the same behaviour, its tests now passing through the link's.

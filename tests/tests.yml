@@ -18,6 +18,10 @@ suites:
     kind: command
     tags: [unit, host]
     command: [rho, test, device-node]
+  - name: managed
+    kind: command
+    tags: [unit, host, updates]
+    command: [rho, test, managed]
   - name: kernels-freertos
     kind: command
     tags: [unit, host]

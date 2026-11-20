@@ -250,6 +250,22 @@ RoboHubError robohub_secure_open(RoboHubSecure* secure, rh_u16 msg_id, rh_u16 tx
                                  const rh_u8** inner, rh_size* inner_length);
 
 /** HMAC-SHA256 truncated to `out_length` bytes; exposed for tests and tools. */
+/**
+ * @brief SHA-256 in pieces: the hash sealing is built on, for a caller that
+ *        hashes data as it arrives (the managed layer's image).
+ */
+typedef struct {
+    rh_u32 state[8];
+    rh_u32 bits_low;
+    rh_u32 bits_high;
+    rh_u8 block[64];
+    rh_size used;
+} RoboHubSha256;
+
+void robohub_sha256_init(RoboHubSha256* sha);
+void robohub_sha256_update(RoboHubSha256* sha, const rh_u8* data, rh_size length);
+void robohub_sha256_final(RoboHubSha256* sha, rh_u8 out[32]);
+
 void robohub_secure_hmac(const rh_u8* key, rh_size key_length,
                          const rh_u8* message, rh_size message_length,
                          rh_u8* out, rh_size out_length);

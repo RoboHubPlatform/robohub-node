@@ -1,0 +1,32 @@
+# robohub-managed Kconfig
+# The managed layer: firmware updates over the link (RNODE-UPD-*).
+
+menu "RoboHub managed layer"
+
+config RH_NODE_MANAGED
+    bool "Updates over the link"
+    default n
+    help
+      Take firmware updates from the gateway over the link: an Ed25519-signed
+      manifest, the image in chunks to the inactive slot, booted once and kept
+      only when the board is healthy (robohub ADR-0022). Needs the link, and the
+      mesh's update key in robohub_update_key.h.
+
+config RH_UPDATE_CONFIRM_MS
+    int "Healthy time before an image is kept (ms)"
+    default 30000
+    help
+      How long an image booted once must run with its session up and every
+      task on time before it is confirmed.
+
+config RH_UPDATE_TIMEOUT_MS
+    int "Time without a chunk before a transfer is dropped (ms)"
+    default 60000
+
+config RH_UPDATE_MAX_CHUNK
+    int "Largest chunk taken (bytes)"
+    default 192
+    help
+      The largest chunk an offer may name; 192 fits a sealed 256-byte frame.
+
+endmenu

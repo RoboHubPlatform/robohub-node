@@ -1,0 +1,13 @@
+# robohub-managed's test suites.
+#
+# The update state machine on a fake board — the real core, link and managed
+# layer over an in-memory slot and a fake clock — and the RFC 8032 vectors for
+# the vendored Ed25519; and the end to end update of a Linux host board
+# (e2e_update.py, skipped where robohub-linux or python's cryptography is absent).
+name: robohub-managed
+suites:
+  # @verifies RNODE-UPD-0001, RNODE-UPD-0002, RNODE-UPD-0003, RNODE-UPD-0004, RNODE-UPD-0005, RNODE-UPD-0006, RNODE-UPD-0007, PROTO-0008
+  - name: unit
+    kind: ctest
+    tags: [unit, host]
+    ctest: {}

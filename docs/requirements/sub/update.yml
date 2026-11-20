@@ -1,0 +1,124 @@
+# Updates over the link on the board (robohub-node Phase 2b): the managed layer
+# that takes an offer, receives the image, verifies it, boots it once and confirms
+# it (RNODE-0012; robohub ADR-0021, ADR-0022; this collection's ADR-0003).
+# Approved 2026-11-20.
+level: SUB
+prefix: RNODE-UPD
+title: Node updates
+requirements:
+  - id: RNODE-UPD-0001
+    title: The managed layer is chosen like any other
+    statement: >
+      The managed layer shall be a module of the collection (`managed/`),
+      depending only on the core, the link and robohub-common, compiled into an
+      image only when the application chooses it (`CONFIG_RH_NODE_MANAGED`), with
+      the mesh's update public key taken from a header the build generates; an
+      image without the key shall refuse every offer as not provisioned.
+    rationale: Layers are chosen in the manifest and depend only downward (RNODE-0003, RNODE-0004); a board must not take updates its build was never given a key for.
+    satisfies: [RNODE-0012, RNODE-0004]
+    decided_by: [ADR-0003, robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, layers]
+
+  - id: RNODE-UPD-0002
+    title: An offer is refused unless it is signed, for this board, newer and fits
+    statement: >
+      On `UPDATE_OFFER` the managed layer shall verify the manifest's Ed25519
+      signature under the compiled-in update key, and answer `UPDATE_STATUS`
+      refused, with the reason, when the signature does not verify, the manifest
+      names another board, its security version is below the board's, the image
+      is larger than the inactive slot, the platform is not updatable, or another
+      update is under way; otherwise accepted, with next index 0.
+    rationale: The board trusts the signature, not the gateway that carried it; no downgrade below the security version (robohub ADR-0022, 3).
+    satisfies: [RNODE-0012]
+    decided_by: [ADR-0003, robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, security]
+
+  - id: RNODE-UPD-0003
+    title: Chunks are written in order and acknowledged with the next index
+    statement: >
+      The managed layer shall write each `UPDATE_CHUNK` whose index is the next it
+      expects to the inactive slot, hashing as it writes, and answer with the
+      next index it expects at least every fourth chunk and on every chunk out of
+      order, which it shall drop; a lost link shall resume at that index, and a
+      board reset shall drop the transfer.
+    rationale: A window of four with resume at the first unacknowledged chunk (robohub ADR-0022, 4).
+    satisfies: [RNODE-0012]
+    decided_by: [ADR-0003, robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, transfer]
+
+  - id: RNODE-UPD-0004
+    title: A whole image is checked before it is booted once
+    statement: >
+      With the last chunk the managed layer shall compare the image's SHA-256
+      with the manifest's, answer `verified` and ask the platform to boot the new
+      slot once, or answer `failed` and discard the image when they differ; the
+      running slot shall never be written.
+    rationale: Never left without an image that runs (robohub ADR-0022, 5).
+    satisfies: [RNODE-0012]
+    decided_by: [ADR-0003, robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, safety]
+
+  - id: RNODE-UPD-0005
+    title: A new image is kept only once it is healthy
+    statement: >
+      After booting an image once, the managed layer shall confirm it — and raise
+      the board's security version to the manifest's — only when its link session
+      is up and the core has fed the watchdog continuously for 30 s, then report
+      `confirmed`; when the platform says the last image booted once was rolled
+      back, it shall report `rolled back` once its session is up.
+    rationale: An image that hangs or cannot reach its gateway must not be kept, and the person must hear which happened (robohub ADR-0022, 6).
+    satisfies: [RNODE-0012, RNODE-0008]
+    decided_by: [ADR-0003, robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, health]
+
+  - id: RNODE-UPD-0006
+    title: A cancelled update leaves the board as it was
+    statement: >
+      On `UPDATE_CANCEL` for the update under way, or when no chunk arrives for
+      60 s, the managed layer shall drop the transfer and answer `failed` with the
+      reason, and the board shall keep running the image it runs.
+    rationale: A gateway that goes away, or a person who changes their mind, must not leave a board waiting.
+    satisfies: [RNODE-0012]
+    decided_by: [ADR-0003]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates]
+
+  - id: RNODE-UPD-0007
+    title: The update path is tested end to end on a host
+    statement: >
+      Host tests shall drive the managed layer with a fake slot and a fake clock
+      (every refusal, the window, a gap, a lost link, a bad hash, a cancel, a
+      confirmation, a rollback), and an end-to-end test shall update a Linux host
+      board through robohub-linux's file slot from a test gateway that drops
+      frames and cuts the link.
+    rationale: The path that replaces a board's firmware must be proven before it runs on a chip (robohub ADR-0022, 8).
+    satisfies: [RNODE-0012]
+    decided_by: [ADR-0003, robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, tests]
