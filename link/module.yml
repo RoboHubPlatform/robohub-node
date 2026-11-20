@@ -46,9 +46,7 @@ depends:
     branch: main
   - name: robohub-core
     type: c
-    path: ${ROBOHUB_WORKSPACE}/robohub-core
-    git: https://github.com/RoboHubPlatform/robohub-core
-    branch: main
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/core
 
 config:
   dialect: linux

@@ -45,14 +45,10 @@ depends:
     branch: main
   - name: robohub-core
     type: c
-    path: ${ROBOHUB_WORKSPACE}/robohub-core
-    git: https://github.com/RoboHubPlatform/robohub-core
-    branch: main
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/core
   - name: robohub-transport
     type: c
-    path: ${ROBOHUB_WORKSPACE}/robohub-transport
-    git: https://github.com/RoboHubPlatform/robohub-transport
-    branch: main
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/link
 
 config:
   dialect: linux

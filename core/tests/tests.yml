@@ -1,0 +1,16 @@
+# robohub-core's test suites.
+#
+# The host tests were in the repository and built by CMake with the host tests
+# on, but nothing declared them, so `rho test .` (and CI) ran none of them
+# (2026-11-19 review). They are declared now, in robohub-node.
+name: robohub-core
+suites:
+  # test_core.c: the lifecycle order; test_scheduler.c: periods, removal, errors;
+  # test_event.c: synchronous zero-copy delivery and refusals; test_diagnostics.c:
+  # counters and last errors; test_osal.c: the bare-metal OSAL defaults.
+  # @verifies CORE-0001, CORE-0002, CORE-0003, CORE-0004, CORE-0005, CORE-0006
+  # @verifies CORE-0009, CORE-0010, CORE-0011
+  - name: unit
+    kind: ctest
+    tags: [unit, host]
+    ctest: {}

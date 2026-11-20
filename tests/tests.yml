@@ -1,0 +1,20 @@
+# robohub-node's test suites: each module's own suites, run in the module's
+# folder, so one `rho test .` (and one CI run) covers the whole runtime.
+name: robohub-node
+suites:
+  - name: core
+    kind: command
+    tags: [unit, host]
+    command: [rho, test, core]
+  - name: link
+    kind: command
+    tags: [unit, host]
+    command: [rho, test, link]
+  - name: telemetry
+    kind: command
+    tags: [unit, host]
+    command: [rho, test, telemetry]
+  - name: kernels-freertos
+    kind: command
+    tags: [unit, host]
+    command: [rho, test, kernels/freertos]

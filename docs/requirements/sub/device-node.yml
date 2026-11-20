@@ -1,0 +1,54 @@
+# The device node runtime (device-node/): the link and its framing, the
+# telemetry bridge, publishing a reading and dispatching a control request to the
+# device it names. Moved from robohub-devices (runtime/device-node) with robohub
+# ADR-0020; formerly DEVS-NODE-0001..0003, renumbered because a prefix lives in
+# one repository.
+level: SUB
+prefix: RNODE-DEV
+title: Device node runtime
+requirements:
+  - id: RNODE-DEV-0001
+    title: The runtime frames readings for the application
+    statement: >
+      The device-node runtime shall present up to 8 devices per node, publish a
+      temperature, power or state reading handed to it as the matching
+      robohub-protocol message through robohub-transport, and read its link every
+      5 ms so that a command reaches the node.
+    rationale: An application supplies what it reads and what a command does, and never touches the wire. (Formerly DEVS-NODE-0001 in robohub-devices.)
+    satisfies: [DEVS-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [device-node, runtime]
+
+  - id: RNODE-DEV-0002
+    title: Commands are dispatched by the device they name
+    statement: >
+      The runtime shall route a control request to the handler of the device its
+      area and node name and answer with result 0 and the value reached when the
+      handler succeeds, 1 when it fails, and 2 when no device or handler takes the
+      opcode; it shall answer SET_SAMPLING_RATE itself by setting the poll
+      period, never below 100 ms, and reporting the period set.
+    rationale: One node may present several devices, each commanded apart; a device's own opcodes start at 256 so they cannot collide with the ecosystem's. (Formerly DEVS-NODE-0002 in robohub-devices.)
+    satisfies: [DEVS-0005]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [device-node, commands]
+
+  - id: RNODE-DEV-0003
+    title: A sealed node configuration must be complete
+    statement: >
+      The runtime shall refuse a configuration that names a board id without a
+      key or a key without an id, and a sealed configuration with no link read,
+      since the gateway's session answer arrives on the link.
+    rationale: A sealed node that cannot read the session answer would never send a frame the gateway accepts. (Formerly DEVS-NODE-0003 in robohub-devices.)
+    satisfies: [DEVS-0006]
+    status: proposed
+    verification: analysis
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [device-node, security]
+
