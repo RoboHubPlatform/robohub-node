@@ -1,0 +1,216 @@
+# The node programming model of robohub-node: what a node application is, what
+# the runtime guarantees, how its services are layered and chosen, and what a
+# kernel adapter provides (robohub SYS-0072, ADR-0020; this collection's
+# ADR-0001). Phase 0: the model only — nothing implements these yet beyond what
+# robohub-core, -transport, -telemetry and -freertos already do (see
+# docs/doc/gaps.md). Proposed, for the maintainer to decide.
+level: NODE
+prefix: RNODE
+title: robohub-node
+requirements:
+  # The application model
+  - id: RNODE-0001
+    title: A node application is handlers and timers on one loop
+    statement: >
+      A node application shall be made of applications with a lifecycle (`init`
+      once in registration order before the loop, `start` when it begins, `step`
+      every pass, `stop` in reverse order when it ends), periodic tasks (a function
+      and a period, run when due) and event subscriptions (handlers called inline
+      when an event is published), all run cooperatively on one loop with no
+      preemption, so a node application needs no thread, no stack per task and no
+      locking.
+    rationale: This is robohub-core's model today and the smallest one that runs the same on an AVR and under an RTOS; a blocking task blocks everything, a constraint the application owns in exchange for simplicity.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001, robohub:ADR-0020]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [model, loop]
+
+  - id: RNODE-0002
+    title: An event is published synchronously and without a copy
+    statement: >
+      Publishing an event shall call its subscribers in subscription order,
+      inline, with the publisher's own payload, valid only until the publish call
+      returns; a subscriber that refuses an event shall not stop the others and
+      shall be counted, with its last error, in the diagnostics.
+    rationale: Zero-copy synchronous dispatch is what keeps the bus allocation-free; the lifetime rule is the price, stated once.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [model, events]
+
+  # Layers and choosing them
+  - id: RNODE-0003
+    title: The runtime is layers, and no layer depends on one above it
+    statement: >
+      The runtime's services shall be layered — core (loop, lifecycle, timers,
+      events, local signals and actions, settings, watchdog and reset records,
+      diagnostics), link, telemetry, device node, managed lifecycle — over kernel
+      adapters, each depending only on robohub-common and the layers below it; the
+      core shall depend on nothing but robohub-common and a kernel adapter, and a
+      test shall build a core-only application for the smallest supported board
+      and find no symbol of the link, telemetry, device-node or managed layers in
+      its image.
+    rationale: Joining an installation must be turning layers on, never rewriting the application; a core that reached up would drag networking into every blink.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001, robohub:ADR-0020]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [layers, dependencies]
+
+  - id: RNODE-0004
+    title: An application chooses its services in its manifest
+    statement: >
+      An application shall choose the runtime services it uses in its manifest
+      (Kconfig beneath), and a service it does not choose shall be neither
+      compiled nor linked into its image; choosing a service shall pull in the
+      services below it and nothing above.
+    rationale: A board carries what it uses; the manifest is where a RoboHub application already says what it is.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [layers, manifest, config]
+
+  - id: RNODE-0005
+    title: A board application runs without a gateway, Mesh or keys
+    statement: >
+      An application using no runtime (the platform's HAL alone) or the core
+      alone shall build, flash and run with no gateway, Mesh, keeper, enrollment or
+      key, and adding the link, telemetry or managed layer later shall not require
+      changing its handlers, tasks or signals.
+    rationale: Many board programs never need a network (SYS-0072); those that later do keep their code.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001, robohub:ADR-0020]
+    status: approved
+    verification: demonstration
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [standalone]
+
+  # Memory
+  - id: RNODE-0006
+    title: No memory is allocated after a node starts
+    statement: >
+      On a board the runtime shall allocate no memory after `init`: its tables
+      (applications, tasks, subscriptions) and buffers shall be sized at build time
+      from configuration, a registration beyond a table's size shall fail with
+      ROBOHUB_ERR_NO_MEM rather than grow it, and the diagnostics shall report each
+      table's size and high-water mark.
+    rationale: A node runs unattended for years; memory that can fragment or run out at run time is a failure nobody is there to see. Rho's fixed arena on boards follows the same rule.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [memory, determinism]
+
+  # What an application uses
+  - id: RNODE-0007
+    title: Signals and actions are named once and used locally or remotely
+    statement: >
+      The core shall let an application read the signals and perform the actions
+      its manifest declares, by name, on the board itself; when the telemetry and
+      link layers are chosen, the same signals shall be what is published and the
+      same actions what a parent may ask for, with no second declaration.
+    rationale: Today signals and actions live in manifests Mesh reads and in per-driver code on the board; one declaration both sides use is the node half of the manifest-as-contract principle.
+    satisfies: [SYS-0072, SYS-0051]
+    decided_by: [ADR-0001]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [signals, actions, manifest]
+
+  - id: RNODE-0008
+    title: A node knows why it reset and is restarted when it hangs
+    statement: >
+      The core shall offer a watchdog policy (a hardware watchdog fed by the loop
+      only while every registered task has run within its allowance), the reason of
+      the last reset and a record of the last fault, readable by the application
+      and, when the link is chosen, reported to the parent.
+    rationale: A node that hangs or crashes must recover by itself and say why (SYS-0070 for boards); no RoboHub interface offers this today.
+    satisfies: [SYS-0072, SYS-0070]
+    decided_by: [ADR-0001]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [health, watchdog]
+
+  # Beneath and above
+  - id: RNODE-0009
+    title: A kernel adapter provides the OSAL and drives the loop
+    statement: >
+      A kernel adapter shall implement robohub-common's OSAL (whether an RTOS is
+      present, start, threads, millisecond sleep and clock, mutexes) and run the
+      core's loop; the core shall behave the same — same lifecycle order, same task
+      timing within a tick, same event delivery — on bare metal and on FreeRTOS, and
+      a test shall run one application on both.
+    rationale: The kernel is a backend (ADR-0020); an application that behaves differently per kernel would make the choice of kernel the application's problem.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001, robohub:ADR-0020]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [kernels, osal]
+
+  - id: RNODE-0010
+    title: A Rho application uses the node core through published bindings
+    statement: >
+      The collection shall publish the bindings a Rho application uses for the
+      core — registering applications, tasks and subscriptions, publishing events,
+      reading signals and performing actions — so a Rho node application is written
+      as handlers and timers like a C one, without hand-written FFI declarations.
+    rationale: Rho builds board applications today, but on the platform and drivers alone; the node model must be as reachable from Rho as from C.
+    satisfies: [SYS-0072]
+    decided_by: [ADR-0001]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [rho, bindings]
+
+  - id: RNODE-0011
+    title: The link is secure by default and proven against the gateway
+    statement: >
+      When the link is chosen, every frame a node sends or accepts shall be
+      authenticated as robohub-protocol defines (sealing, key epochs, replay and
+      session counters), with no option to send unsealed frames on a network link,
+      and the board's sealing and the gateway's shall be tested against one shared
+      set of test vectors.
+    rationale: Board and gateway sealing are tested apart today (2026-11-19 review); if both drifted the same way no test would notice.
+    satisfies: [SYS-0072, SYS-0052]
+    decided_by: [ADR-0001]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [link, security]
+
+  - id: RNODE-0012
+    title: A managed node's lifecycle is run from the installation's edge
+    statement: >
+      When the managed layer is chosen, a node shall be enrolled and identified
+      through the keeper, take signed A/B firmware updates over its link from Mesh
+      with rollback to the image that last started, and report its health, with no
+      vendor service involved.
+    rationale: Updates and identity are what make a fleet maintainable; RoboHub runs them locally (SYS-0001). Phase 2 implements it.
+    satisfies: [SYS-0072, SYS-0001]
+    decided_by: [ADR-0001, robohub:ADR-0020]
+    status: approved
+    verification: demonstration
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [managed, updates, identity]

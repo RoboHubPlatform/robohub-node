@@ -1,0 +1,60 @@
+#
+# @file module.yml
+# @brief robohub-node — the node operating environment of the RoboHub ecosystem.
+#
+# What makes a board a RoboHub node: an application model (handlers and timers
+# on one loop), and runtime services an application opts into — local signals
+# and actions, settings, the watchdog; a secure link to a parent; telemetry; the
+# device node; a lifecycle managed from the edge — over any kernel. It builds on
+# robohub-common's contracts and on nothing platform-specific (robohub ADR-0020).
+#
+# A collection: core (from robohub-core), link (robohub-transport), telemetry
+# (robohub-telemetry), device-node (robohub-devices/runtime/device-node) and
+# kernels/freertos (robohub-freertos), moved in with their history in Phase 1.
+# Each keeps its module name, id, version, CHANGELOG and requirements prefix.
+#
+# @project RoboHub
+# @license MIT
+#
+
+module:
+  name: robohub-node
+  id: robohub.collection.node
+  type: collection
+  version: 0.1.0
+  license: "MIT"
+  description: >
+    The node operating environment for the RoboHub Platform: an application
+    model and opt-in runtime services — local signals and actions, settings,
+    watchdog, a secure link, telemetry, the device node and an edge-managed
+    lifecycle — over bare metal, FreeRTOS or another kernel, on robohub-common's
+    contracts. A board application may use none, some or all of it.
+  maintainer: "Aurel Miron"
+  created: "2026-11-20"
+
+# The contracts every module in the collection is written against. A collection
+# is not built, but it belongs to the ecosystem that declares them, and naming it
+# is what lets a tool recognize the platform and find the module contract.
+depends:
+  - name: robohub-common
+    type: c
+    path: ../robohub-common
+
+modules:
+  - core
+  - link
+  - telemetry
+  - device-node
+  - kernels/freertos
+
+docs:
+  title: RoboHub Node
+  section: platform
+  index: docs/doc/index.md
+  sources:
+    - docs/doc/index.md
+    - docs/doc/gaps.md
+
+# The collection's requirements are numbered RNODE-NNNN (RNODE-<SUB>-NNNN per
+# subsystem as modules arrive). RNODE, not NODE: NODE is a level's name.
+requirements: { prefix: RNODE, parent: robohub }

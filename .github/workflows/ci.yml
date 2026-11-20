@@ -1,0 +1,15 @@
+# robohub-node's CI: the shared RoboHub workflow, with robohub-common beside it;
+# tests/tests.yml runs every module's suites.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    uses: RoboHubPlatform/robohub/.github/workflows/robohub-ci.yml@main
+    secrets: inherit
+    with:
+      siblings: robohub-common
