@@ -1,0 +1,25 @@
+# robohub-transport's host tests: the framing, and authenticated frames. The
+# ctest kind configures, builds and runs them, so `rho test` is how they run.
+name: robohub-transport
+suites:
+  # test_transport.c: framing, the frame hook, the authenticated link, REKEY and
+  # SESSION_RESET through the transport. test_secure.c: HMAC vectors, the
+  # handshake, sealing and opening, expiry, key epochs, scope and the store hook.
+  # test_vectors.c: the board against the shared known-answer vectors
+  # (tests/vectors/secure.json), byte for byte, as robohub-gateway is.
+  # @verifies TRAN-0001, TRAN-0002, TRAN-0003, TRAN-0004, TRAN-0005, TRAN-0006
+  # @verifies TRAN-FRAME-0001, TRAN-FRAME-0002, TRAN-FRAME-0003, TRAN-FRAME-0006
+  # @verifies TRAN-SEC-0001, TRAN-SEC-0002, TRAN-SEC-0003, TRAN-SEC-0004, TRAN-SEC-0005, TRAN-SEC-0006
+  # @verifies TRAN-SEC-0007, TRAN-SEC-0008, TRAN-SEC-0009, TRAN-SEC-0010, TRAN-SEC-0011, TRAN-SEC-0012
+  - name: unit
+    kind: ctest
+    tags: [unit, host]
+    ctest: {}
+  # The known-answer vectors are what their generator writes: a hand edit to
+  # secure.json, or a change to the protocol in generate.py that was not
+  # written out, fails here.
+  # @verifies TRAN-SEC-0012
+  - name: vectors
+    kind: command
+    tags: [unit, host, vectors]
+    command: [python3, tests/vectors/generate.py, --check]

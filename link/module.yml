@@ -1,0 +1,107 @@
+#
+# robohub-transport — COBS framing, a Fletcher-16 check and a byte-stream parser.
+#
+# Sits between a physical byte stream and the runtime: it turns UART, USB CDC,
+# RS-485, SPI or socket bytes into validated frames and publishes each one on the
+# event bus. No allocation, safe to feed from an interrupt.
+#
+# @project RoboHub Platform
+# @license MIT
+#
+
+module:
+  name: robohub-transport
+  id: robohub.runtime.transport
+  previous_ids:
+    - robohub-transport
+  type: runtime
+  version: 0.4.2
+  description: >
+    COBS framing with a Fletcher-16 integrity check and a byte-at-a-time parser,
+    over any physical byte stream, publishing validated frames on the event bus.
+
+  maintainer: "Aurel Miron"
+  license: "MIT"
+  created: "2026-10-08"
+
+# The transport's requirements are numbered TRAN-NNNN (and TRAN-<SUB>-NNNN for
+# framing and the secure link) and serve the system requirements robohub holds.
+requirements: { prefix: TRAN, parent: robohub }
+
+build:
+  language: c
+  standard: c11
+  include_dirs:
+    - include/
+    - include/robohub/
+  sources:
+    - src/transport.c
+    - src/secure.c
+
+depends:
+  - name: robohub-common
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-common
+    git: https://github.com/RoboHubPlatform/robohub-common
+    branch: main
+  - name: robohub-core
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-core
+    git: https://github.com/RoboHubPlatform/robohub-core
+    branch: main
+
+config:
+  dialect: linux
+  kconfig_fragments:
+    - Kconfig
+
+exports:
+  headers:
+    - robohub/transport.h
+  cmake:
+    target: "rho::robohub-transport"
+    include_dirs:
+      - include
+    link_libraries:
+      - rho::robohub-common
+      - rho::robohub-core
+
+tests:
+  enabled: true
+  test_dirs:
+    - tests/
+  test_files:
+    - tests/test_transport.c
+
+testing:
+  host_tests:
+    enabled: true
+    target_constraint: "native"
+
+# The physical transports this runtime can carry its frames over. A deployment
+# planner intersects this list with what a board actually has, so an option
+# appears only when both ends can serve it.
+capabilities:
+  transports: "uart console usb wifi ethernet socket rs485 spi i2c http mqtt"
+
+package:
+  kind: library
+  binary: false
+
+metadata:
+  tags:
+    - runtime
+    - transport
+    - cobs
+    - framing
+    - fletcher16
+  stability: experimental
+  visibility: public
+
+docs:
+  title: robohub-transport
+  section: modules
+  order: "10"
+  index: docs/doc/index.md
+  sources:
+    - docs/doc/index.md

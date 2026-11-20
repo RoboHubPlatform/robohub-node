@@ -1,0 +1,112 @@
+# What robohub-transport does towards the system requirements: the board's half
+# of the link to its gateway — frames over any byte stream, and the sealed
+# session that makes a board's frames ones its gateway can trust. The gateway's
+# half is robohub-gateway's GW-SEC requirements; the protocol both implement is
+# robohub:ADR-0010. Written in the R5 backfill from secure.h, transport.h, the
+# changelog and the host tests; proposed until the maintainer approves them.
+level: NODE
+prefix: TRAN
+title: Transport
+requirements:
+  - id: TRAN-0001
+    title: Frames are delimited and checked on any byte stream
+    statement: >
+      The transport shall carry each message over a byte stream as one
+      COBS-encoded frame ended by 0x00, with a header and a Fletcher-16 check, and
+      shall deliver a received frame only when its length and check hold.
+    rationale: >
+      A UART, a USB CDC pipe, an RS-485 bus and a socket all lose message
+      boundaries and some bytes; the gateway reads the same frames from all of
+      them (robohub-gateway GW-LINK).
+    satisfies: [SYS-0048]
+    decided_by: [ADR-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [framing]
+
+  - id: TRAN-0002
+    title: An authenticated link sends and takes only sealed frames
+    statement: >
+      On a link given a secure session, the transport shall send every message
+      sealed under that session, send none before a session is established, and
+      drop every received frame that does not open under the session, except the
+      gateway's SESSION answer to its own hello.
+    rationale: >
+      A reading must never leave unauthenticated and a forged command must never
+      reach the program; this is the board's half of GW-0001.
+    satisfies: [SYS-0020]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security]
+
+  - id: TRAN-0003
+    title: A board authenticates with the key it was built with
+    statement: >
+      The board shall open a session with a hello authenticated by the 128-bit
+      device key and 64-bit id compiled into its firmware, with no key or
+      credential entered at run time or received over a link.
+    rationale: >
+      The gateway derives the same key from its own key and the board's id
+      (GW-SEC-0001), so a board built by Mesh is enrolled by being built.
+    satisfies: [SYS-0019]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, enrollment]
+
+  - id: TRAN-0004
+    title: A board takes a rotated key without being flashed
+    statement: >
+      The board shall accept a new key epoch from its gateway only sealed under
+      its current session, keep the new key durably, prove to the gateway that it
+      holds it, and open every session from its next hello with it, including
+      after a reboot.
+    rationale: >
+      The gateway retires the old epoch only on that proof (GW-SEC-0010), so a
+      key that may have been copied is replaced without a cable.
+    satisfies: [SYS-0022]
+    decided_by: [robohub:ADR-0010, ADR-0002]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, key-rotation]
+
+  - id: TRAN-0005
+    title: A board opens a new session when its gateway restarted
+    statement: >
+      On a SESSION_RESET opened under its current session the board shall drop
+      that session and send a new hello at once, without being reset or touched.
+    rationale: >
+      After a restart the gateway refuses the board's counters below its
+      restored mark (GW-SEC-0012, GW-SEC-0013); without this the board would go
+      unheard until its session expired.
+    satisfies: [SYS-0023]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, recovery, restart]
+
+  - id: TRAN-0006
+    title: A relay carries its boards' frames whole
+    statement: >
+      The transport shall hand every frame that checks out to a frame hook, when
+      one is set, before the event bus, and shall not publish a frame the hook
+      takes, sealed or not.
+    rationale: >
+      A relay forwards a board's sealed frame it cannot open, so the parent opens
+      it with the board's own key (GW-0007, GW-LINK-0005).
+    satisfies: [SYS-0026]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [relay, topology]

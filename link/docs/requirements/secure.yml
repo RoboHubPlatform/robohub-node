@@ -1,0 +1,198 @@
+# The secure link, board side: the hello and session handshake, sealing and
+# opening, key epochs and REKEY, SESSION_RESET (src/secure.c, the secure half of
+# src/transport.c, include/robohub/secure.h). Each requirement names the gateway
+# requirement it must agree with. Proposed until the maintainer approves them.
+level: SUB
+prefix: TRAN-SEC
+title: Secure link
+requirements:
+  - id: TRAN-SEC-0001
+    title: HMAC-SHA256 is the standard one
+    statement: >
+      robohub_secure_hmac shall compute HMAC-SHA256 (RFC 2104 over FIPS 180-4)
+      truncated to the length asked for, matching RFC 4231 test cases 1, 2 and 6,
+      without allocating memory.
+    rationale: Every key and tag in the protocol is this function; the gateway computes it with Go's library, so the two must agree byte for byte.
+    satisfies: [TRAN-0002, TRAN-0003]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, crypto]
+
+  - id: TRAN-SEC-0002
+    title: A hello carries a fresh nonce, or is not sent
+    statement: >
+      A hello shall be uid(8) | nonce_b(8) | tag(8), the tag being
+      HMAC-SHA256(K_dev, "rh-hello1" | uid | nonce_b)[0:8], with nonce_b taken
+      from the instance's nonce source; when the source fails — as the weak
+      default robohub_platform_nonce always does — no hello shall be made and
+      ROBOHUB_ERR_NOT_SUPPORTED returned.
+    rationale: A predictable nonce would let an old SESSION be replayed; no source must mean no session, not a weak one. The gateway checks this tag (GW-SEC-0001) and refuses a repeated nonce (GW-SEC-0004).
+    satisfies: [TRAN-0003]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, sessions]
+
+  - id: TRAN-SEC-0003
+    title: Only the answer to the last hello opens a session
+    statement: >
+      The board shall accept a SESSION only while a hello is outstanding, only
+      for its own uid and only when its tag over "rh-session1" | uid | nonce_b |
+      sid | nonce_g | lifetime matches under K_dev, and shall then derive
+      K_up and K_down as HMAC-SHA256(K_dev, "rh-up1" or "rh-down1" | nonce_b |
+      nonce_g)[0:16] and start both counters at 0; any other SESSION shall be
+      refused and counted in rejected.
+    rationale: Binding the answer to the board's nonce stops an old SESSION from being replayed after a new hello; a changed lifetime or sid must not be taken.
+    satisfies: [TRAN-0002]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, sessions]
+
+  - id: TRAN-SEC-0004
+    title: A sealed frame carries a rising counter and a tag
+    statement: >
+      Sealing shall produce sid(2) | counter(4) | payload | tag(8), with the
+      counter one more than the last sent in the session and the tag
+      HMAC-SHA256(K_up, msg_id with the 0x8000 flag | tx_id | sid | counter |
+      payload)[0:8], and shall refuse with ROBOHUB_ERR_STATE when no live session
+      is established.
+    rationale: This is what the gateway opens (GW-SEC-0002); a counter that only rises is what makes a replay detectable.
+    satisfies: [TRAN-0002]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, sessions]
+
+  - id: TRAN-SEC-0005
+    title: A received frame opens only under the live session
+    statement: >
+      The board shall refuse a received frame unless its message id has the
+      0x8000 flag, a session is live, its sid is the session's, its counter is
+      greater than the last accepted from the gateway, and its tag matches under
+      K_down compared in constant time, counting each refusal in rejected.
+    rationale: Authenticity, integrity and replay protection on the downward direction, the mirror of GW-SEC-0002.
+    satisfies: [TRAN-0002]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, sessions, replay]
+
+  - id: TRAN-SEC-0006
+    title: A session ends at its lifetime
+    statement: >
+      A session shall stop sealing and opening once the lifetime the gateway gave
+      has passed on the board's millisecond clock, compared as a signed
+      difference so the clock wrapping does not end it, and before its upward
+      counter reaches 0xFFFFFFF0.
+    rationale: The gateway ends sessions after 3600 s (GW-SEC-0003); a board that went on sealing under an expired session would go unheard.
+    satisfies: [TRAN-0002]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, sessions]
+
+  - id: TRAN-SEC-0007
+    title: An authenticated link says hello instead of sending in the clear
+    statement: >
+      robohub_transport_send on an authenticated link with no live session shall
+      send a hello instead of the message and return ROBOHUB_ERR_STATE, repeating
+      an unanswered hello no sooner than 2 s after the last; a plain frame
+      received on such a link shall be dropped and counted.
+    rationale: A reading is never sent unauthenticated, a hello lost on a noisy line is retried, and the gateway refuses plain frames on every network link (GW-SEC-0006).
+    satisfies: [TRAN-0002]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security]
+
+  - id: TRAN-SEC-0008
+    title: REKEY is unwrapped, stored and proven
+    statement: >
+      On a REKEY opened under the current session, of 20 bytes and naming an
+      epoch newer than the key in use, the board shall unwrap the key with
+      HMAC-SHA256(K_dev, "rh-wrap1" | sid | counter)[0:16] of that frame, store
+      it with its epoch, answer REKEY_ACK new_epoch | HMAC-SHA256(K_new,
+      "rh-rekey-ok" | uid | new_epoch)[0:8] sealed under the same session, keep
+      its current key for the rest of the session and use the new one from its
+      next hello; a repeated identical REKEY shall be answered again without a
+      second write, and neither message shall reach the event bus.
+    rationale: The gateway confirms the epoch only on this proof and retries REKEY up to three times (GW-SEC-0010), so the answer must be repeatable without wearing the store.
+    satisfies: [TRAN-0004]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, key-rotation]
+
+  - id: TRAN-SEC-0009
+    title: A board that cannot store a key says so
+    statement: >
+      When the rotated key cannot be stored, the board shall answer REKEY_ACK
+      with epoch 0 and an all-zero proof and keep using its current key.
+    rationale: The gateway records such a board as unable to rotate and stops asking (GW-SEC-0010, GW-SEC-0011).
+    satisfies: [TRAN-0004]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, key-rotation]
+
+  - id: TRAN-SEC-0010
+    title: A stored key is used only when newer and of the build's scope
+    statement: >
+      At init the board shall use the key held in its keystore instead of the
+      compiled-in one only when the stored epoch is greater than the compiled-in
+      epoch and the stored scope equals the build's key scope (eight zero bytes
+      for a build without one), and shall store a rotated key with the build's
+      scope, or through the instance's own store hook when one is set.
+    rationale: A board reflashed after a rotation keeps its newer flashed key, and a board moved to another mesh does not keep its old mesh's key.
+    satisfies: [TRAN-0004]
+    decided_by: [ADR-0002]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, key-rotation, keystore]
+
+  - id: TRAN-SEC-0011
+    title: SESSION_RESET is taken only under the current session
+    statement: >
+      The board shall act on a SESSION_RESET only when it opens under the
+      current session with a counter past the last accepted, and shall then wipe
+      the session's keys, return to needing a hello, keep a key a REKEY gave for
+      that hello, and send the hello at once; the reset shall not reach the event
+      bus.
+    rationale: The gateway sends it sealed, reason 1, after a restart (GW-SEC-0013); unsealed, replayed or under another session it would let anyone knock a board off its session.
+    satisfies: [TRAN-0005]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, restart]
+
+  - id: TRAN-SEC-0012
+    title: Sealed frames are the shared known-answer vectors
+    statement: Given the inputs of tests/vectors/secure.json, the board shall produce byte for byte the hello, session keys, sealed frames and REKEY_ACK the file records, and shall open the gateway's frames it records; the file is written by tests/vectors/generate.py from the protocol in secure.h and is the one robohub-gateway is held to.
+    rationale: Two implementations tested apart can drift the same way unnoticed; one set of known answers checked by both cannot.
+    satisfies: [TRAN-0002, TRAN-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, interop, vectors]

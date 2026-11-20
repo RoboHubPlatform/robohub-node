@@ -1,0 +1,97 @@
+# The framing layer: COBS, the Fletcher-16 check, the byte-at-a-time parser and
+# its counters (src/transport.c, include/robohub/transport.h). Proposed until the
+# maintainer approves them.
+level: SUB
+prefix: TRAN-FRAME
+title: Framing
+requirements:
+  - id: TRAN-FRAME-0001
+    title: The frame on the wire
+    statement: >
+      A frame shall be msg_id, tx_id and payload_len as little-endian u16, the
+      payload, and a Fletcher-16 of the header and payload as a little-endian
+      u16, COBS-encoded and followed by a single 0x00, which shall appear nowhere
+      else in the encoded frame.
+    rationale: The gateway decodes exactly this; the delimiter lets the parser find a boundary with no timer, even joining a stream mid-frame.
+    satisfies: [TRAN-0001]
+    decided_by: [ADR-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [framing, wire-format]
+
+  - id: TRAN-FRAME-0002
+    title: A damaged or oversized frame is dropped and counted
+    statement: >
+      The parser shall drop a frame whose COBS decoding fails, that is shorter
+      than its 8-byte header and check, whose length disagrees with payload_len,
+      or whose check does not match, and shall drop the bytes held when more than
+      RH_TRANSPORT_MAX_FRAME_SIZE (256 by default) arrive without a delimiter,
+      counting each in check_errors (crc_errors, its deprecated alias) or
+      dropped.
+    rationale: A stream cannot ask for bytes again; a half frame is worth nothing, and a link that drops everything must say so.
+    satisfies: [TRAN-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [framing, integrity]
+
+  - id: TRAN-FRAME-0003
+    title: A good frame is published with its event and transaction
+    statement: >
+      A frame that checks out shall be published on the event bus before
+      robohub_transport_feed_byte returns, with its msg_id as the event and its
+      tx_id as the transaction, and counted in rx_packets.
+    rationale: A handler is reached by the event its msg_id names, and an answer is matched to its call by the shared tx_id.
+    satisfies: [TRAN-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [framing, event-bus]
+
+  - id: TRAN-FRAME-0004
+    title: A payload that cannot fit a frame is refused
+    statement: >
+      robohub_transport_send shall return ROBOHUB_ERR_INVALID_ARG and write
+      nothing when the header, payload and check exceed
+      RH_TRANSPORT_MAX_FRAME_SIZE, and shall count each frame it hands to the
+      link in tx_packets.
+    rationale: A frame the receiver must drop for its length is better refused at the sender, where the caller can see it.
+    satisfies: [TRAN-0001]
+    status: proposed
+    verification: analysis
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [framing]
+
+  - id: TRAN-FRAME-0005
+    title: The parser never allocates or blocks
+    statement: >
+      robohub_transport_feed_byte shall neither allocate memory nor block, so
+      that it may be called from the interrupt or DMA callback that delivered the
+      byte.
+    rationale: The same code runs on an 8-bit part with no heap and from a UART interrupt.
+    satisfies: [TRAN-0001]
+    status: proposed
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [framing, embedded]
+
+  - id: TRAN-FRAME-0006
+    title: A frame hook takes frames before the bus
+    statement: >
+      A hook set with robohub_transport_on_frame shall be called with every frame
+      that checks out — on an authenticated link, the opened inner message — and
+      never with one that does not; a frame it returns non-zero for shall not be
+      published, and setting NULL shall remove it.
+    rationale: What a relay needs to carry a board's frame, flagged id and all, rather than act on it.
+    satisfies: [TRAN-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [framing, relay]
