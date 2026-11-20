@@ -1,0 +1,13 @@
+# robohub-device-node's test suites.
+#
+# Host tests over a fake board: the real runtime, link and telemetry beneath the
+# node, a clock the loop advances and a link that keeps every frame.
+name: robohub-device-node
+suites:
+  # test_health_report.c: HEALTH once per boot on a plain link, and again on a
+  # DIAG_REQUEST; test_health_sealed.c: on a sealed link, not before the session.
+  # @verifies RNODE-HEALTH-0004, PROTO-0007
+  - name: unit
+    kind: ctest
+    tags: [unit, host]
+    ctest: {}

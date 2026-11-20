@@ -4,7 +4,7 @@ module:
   previous_ids:
     - robohub-devices.runtime.device-node
   type: runtime
-  version: 0.1.1
+  version: 0.2.0
   description: >
     The runtime a device node is built on: the link and its framing, the
     telemetry bridge, publishing a reading, and dispatching a control request to
@@ -59,6 +59,11 @@ exports:
       - rho::robohub-core
       - rho::robohub-transport
       - rho::robohub-telemetry
+
+testing:
+  host_tests:
+    enabled: true
+    target_constraint: "native"
 
 package:
   kind: library

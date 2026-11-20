@@ -27,7 +27,7 @@ static const robohub_core_app app = {
 // @verifies CORE-0006
 int main(void)
 {
-    assert(strcmp(robohub_core_version(), "0.1.0") == 0);
+    assert(strcmp(robohub_core_version(), "0.2.0") == 0);
     assert(robohub_core_running() == RH_FALSE);
 
     assert(robohub_core_app_register(&app) == ROBOHUB_OK);

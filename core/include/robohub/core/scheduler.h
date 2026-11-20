@@ -68,6 +68,16 @@ RoboHubError robohub_core_task_remove(robohub_core_task_id id);
 /** Change a task's period. */
 RoboHubError robohub_core_task_set_period(robohub_core_task_id id, rh_u32 period_ms);
 
+/**
+ * @brief Declare how long a task may go without running before the watchdog
+ *        stops being fed (RNODE-HEALTH-0001).
+ *
+ * The default, and what 0 restores, is twice the task's period plus the
+ * watchdog period. A task that is meant to run rarely or irregularly declares a
+ * longer one; a task whose lateness matters declares a shorter one.
+ */
+RoboHubError robohub_core_task_set_allowance(robohub_core_task_id id, rh_u32 allowance_ms);
+
 /** How many tasks are registered. */
 rh_u32 robohub_core_task_count(void);
 

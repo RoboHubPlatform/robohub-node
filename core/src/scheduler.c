@@ -14,6 +14,7 @@
 #include "robohub/core/config.h"
 #include "robohub/core/core.h"
 #include "robohub/osal.h"
+#include "robohub/health.h"
 #include "core_internal.h"
 
 typedef struct {
@@ -23,6 +24,9 @@ typedef struct {
     void* user;
     rh_u32 period_ms;
     rh_u32 next_ms;   /* zero means "due on the next pass" */
+    rh_u32 allowance_ms; /* zero: twice the period plus the watchdog period */
+    rh_u32 last_ms;   /* when it last ran, or when the watchdog first saw it */
+    rh_bool seen;     /* last_ms holds a time */
     rh_bool used;
 } task_slot;
 
@@ -55,6 +59,9 @@ void robohub_core_scheduler_reset(void)
         tasks[i].user = 0;
         tasks[i].period_ms = 0u;
         tasks[i].next_ms = 0u;
+        tasks[i].allowance_ms = 0u;
+        tasks[i].last_ms = 0u;
+        tasks[i].seen = RH_FALSE;
     }
     next_id = 1u;
 }
@@ -85,6 +92,9 @@ RoboHubError robohub_core_task_add(const char* name,
         tasks[i].user = user;
         tasks[i].period_ms = period_ms;
         tasks[i].next_ms = 0u;
+        tasks[i].allowance_ms = 0u;
+        tasks[i].last_ms = 0u;
+        tasks[i].seen = RH_FALSE;
         if (out_id != 0) {
             *out_id = id;
         }
@@ -118,6 +128,17 @@ RoboHubError robohub_core_task_set_period(robohub_core_task_id id, rh_u32 period
     return ROBOHUB_OK;
 }
 
+// @req RNODE-HEALTH-0001
+RoboHubError robohub_core_task_set_allowance(robohub_core_task_id id, rh_u32 allowance_ms)
+{
+    task_slot* slot = find(id);
+    if (slot == 0) {
+        return ROBOHUB_ERR_NOT_FOUND;
+    }
+    slot->allowance_ms = allowance_ms;
+    return ROBOHUB_OK;
+}
+
 rh_u32 robohub_core_task_count(void)
 {
     rh_u32 count = 0;
@@ -144,11 +165,15 @@ void robohub_core_scheduler_run(rh_u32 now_ms)
         }
 
         diag->tasks_run++;
+        rh_health_note(slot->id, now_ms);
         RoboHubError err = slot->fn(slot->id, slot->user);
+        rh_health_note(RH_HEALTH_NO_TASK, now_ms);
         if (ROBOHUB_FAILED(err)) {
             diag->task_errors++;
             diag->last_error = err;
         }
+        slot->last_ms = now_ms;
+        slot->seen = RH_TRUE;
 
         slot->next_ms = now_ms + slot->period_ms;
         if (slot->next_ms == 0u) {
@@ -181,6 +206,44 @@ rh_u32 robohub_core_scheduler_next_due(rh_u32 now_ms)
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Keeping time, for the watchdog                                            */
+/* -------------------------------------------------------------------------- */
+
+void robohub_core_scheduler_note_run(robohub_core_task_id id, rh_u32 now_ms)
+{
+    task_slot* slot = find(id);
+    if (slot != 0) {
+        slot->last_ms = now_ms;
+        slot->seen = RH_TRUE;
+    }
+}
+
+/* A task the watchdog has not seen yet starts its allowance now: it was just
+ * registered, and the loop runs it on its next pass. */
+// @req RNODE-HEALTH-0001
+robohub_core_task_id robohub_core_scheduler_late_task(rh_u32 now_ms, rh_u32 watchdog_ms)
+{
+    for (rh_u32 i = 0; i < RH_CORE_MAX_TASKS; i++) {
+        task_slot* slot = &tasks[i];
+        if (!slot->used) {
+            continue;
+        }
+        if (!slot->seen) {
+            slot->last_ms = now_ms;
+            slot->seen = RH_TRUE;
+            continue;
+        }
+        rh_u32 allowance = slot->allowance_ms != 0u
+            ? slot->allowance_ms
+            : 2u * slot->period_ms + watchdog_ms;
+        if ((rh_u32)(now_ms - slot->last_ms) > allowance) {
+            return slot->id;
+        }
+    }
+    return RH_CORE_TASK_INVALID;
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Threaded mode                                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -193,11 +256,14 @@ static void task_thread(void* arg)
     while (robohub_core_running()) {
         robohub_core_diagnostics* diag = robohub_core_diag_state();
         diag->tasks_run++;
+        rh_u32 now = robohub_core_uptime_ms();
+        rh_health_note(slot->id, now);
         RoboHubError err = slot->fn(slot->id, slot->user);
         if (ROBOHUB_FAILED(err)) {
             diag->task_errors++;
             diag->last_error = err;
         }
+        robohub_core_scheduler_note_run(slot->id, robohub_core_uptime_ms());
         robohub_osal_sleep_ms(slot->period_ms);
     }
 }

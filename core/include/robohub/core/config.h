@@ -109,4 +109,14 @@ extern "C" {
 }
 #endif
 
+/* The watchdog period the runtime starts the board's watchdog with, in
+ * milliseconds; 0 leaves it off (RNODE-HEALTH-0001). */
+#ifndef RH_CORE_WATCHDOG_MS
+#  ifdef CONFIG_RH_CORE_WATCHDOG_MS
+#    define RH_CORE_WATCHDOG_MS CONFIG_RH_CORE_WATCHDOG_MS
+#  else
+#    define RH_CORE_WATCHDOG_MS 8000u
+#  endif
+#endif
+
 #endif /* INCLUDE_ROBOHUB_CORE_CONFIG_H */

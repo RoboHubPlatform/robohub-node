@@ -37,6 +37,7 @@ RoboHubError robohub_core_init(const robohub_core_config* config)
     }
 
     robohub_core_diagnostics_reset();
+    robohub_core_health_boot();
     (void)robohub_core_event_init();
     (void)robohub_core_scheduler_init();
 
@@ -72,6 +73,7 @@ RoboHubError robohub_core_run(void)
     }
 
     running = RH_TRUE;
+    robohub_core_watchdog_begin();
 
     if (robohub_osal_rtos_present()) {
         /* With a kernel, the work becomes threads: every periodic task its own,
@@ -109,6 +111,9 @@ RoboHubError robohub_core_run(void)
         (void)robohub_core_event_publish(RH_EVENT_CORE_TICK, &now, (rh_size)sizeof(now));
         robohub_core_scheduler_run(now);
         robohub_core_app_step(now);
+        /* After the pass, on a fresh clock: a pass that took longer than a
+           task's allowance is a loop that was stuck. */
+        robohub_core_watchdog_service(robohub_core_uptime_ms());
 
         rh_u32 wait = robohub_core_scheduler_next_due(now);
         if (wait == RH_CORE_NO_DUE || wait > RH_CORE_TICK_MS) {
@@ -137,5 +142,5 @@ rh_bool robohub_core_running(void)
 
 const char* robohub_core_version(void)
 {
-    return "0.1.0";
+    return "0.2.0";
 }

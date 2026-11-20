@@ -24,3 +24,11 @@ robohub-telemetry, robohub-devices and robohub-freertos with their history. The
 model: the requirements
 (`docs/requirements/node.yml`), the decision (`docs/architecture/adr/0001-*`) and
 the [gap list](gaps.md). The decision to build it this way is robohub ADR-0020.
+
+**Phase 2a — health.** The core reads why the board restarted, its boot count and
+the last fault record at boot, before any application, and keeps the watchdog
+fed only while every task keeps its allowance (`CONFIG_RH_CORE_WATCHDOG_MS`,
+8000 by default, 0 off; `robohub/core/health.h`). With the device node, the
+board reports it once per boot in `HEALTH`. The requirements are
+`docs/requirements/sub/health.yml` (RNODE-HEALTH-0001…0005), the decision
+`docs/architecture/adr/0002-*`, and robohub ADR-0021 for the whole of Phase 2.

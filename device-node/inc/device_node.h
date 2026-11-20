@@ -149,6 +149,11 @@ typedef struct {
      */
     RoboHubSecureStore secure_store;
     void* secure_store_user;
+    /**
+     * The firmware's version, as HELLO carries it; reported in HEALTH so a
+     * report names the image that sent it. 0 when the build does not say.
+     */
+    rh_u16 firmware_version;
 } RoboHubDeviceNodeConfig;
 
 typedef struct {
@@ -174,6 +179,7 @@ typedef struct RoboHubDeviceNode {
     void*                     poll_user;
     robohub_core_task_id      poll_task;
     rh_bool                   ready;
+    rh_bool                   health_sent; /* HEALTH went out this boot */
 } RoboHubDeviceNode;
 
 /* -------------------------------------------------------------------------- */
@@ -232,6 +238,17 @@ RoboHubError robohub_device_node_publish_state(RoboHubDeviceNode* node,
                                                rh_bool on,
                                                rh_f32 setpoint,
                                                rh_u16 status);
+
+/**
+ * @brief Send HEALTH (PROTO-0007) now: why the board last restarted, its boot
+ *        count and the fault record the runtime took at boot.
+ *
+ * The node sends it by itself once per boot — when its session with the gateway
+ * is established on a sealed link, at the first pass on a plain one — and again
+ * whenever a DIAG_REQUEST arrives (RNODE-HEALTH-0004). The device it names is the
+ * node's first device, or 0:0 when it has none yet.
+ */
+RoboHubError robohub_device_node_send_health(RoboHubDeviceNode* node);
 
 #ifdef __cplusplus
 }

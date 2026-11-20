@@ -16,6 +16,13 @@ endif()
 # robohub_locate_module(<name> <out-var>): find a sibling module and set the
 # variable to its directory. `<name>` is the module's name, so the variable is
 # its upper-case form with `_DIR` appended.
+# Where a RoboHub module's sources are: <NAME>_DIR in the environment; else a
+# folder beside this one or above it — by the module's own name (robohub-common
+# and the other repositories of a workspace) or by its folder in the robohub-node
+# collection (robohub-core is core/, robohub-transport link/, robohub-telemetry
+# telemetry/, robohub-freertos kernels/freertos/, robohub-device-node
+# device-node/); else fetched — the collection's modules from robohub-node, whose
+# old repositories are archived, and anything else from its own repository.
 function(robohub_locate_module module out_var)
   string(TOUPPER "${module}" upper)
   string(REPLACE "-" "_" upper "${upper}")
@@ -26,18 +33,48 @@ function(robohub_locate_module module out_var)
     set(${out_var} "$ENV{${upper}_DIR}" PARENT_SCOPE)
     return()
   endif()
-  # A sibling checkout, searched upward: a module may sit nested — a driver
-  # inside a collection — with the sibling several levels above it.
+  set(in_node "")
+  if(module STREQUAL "robohub-core")
+    set(in_node "core")
+  elseif(module STREQUAL "robohub-transport")
+    set(in_node "link")
+  elseif(module STREQUAL "robohub-telemetry")
+    set(in_node "telemetry")
+  elseif(module STREQUAL "robohub-freertos")
+    set(in_node "kernels/freertos")
+  elseif(module STREQUAL "robohub-device-node")
+    set(in_node "device-node")
+  endif()
   set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
-  foreach(level RANGE 6)
+  foreach(level RANGE 8)
     get_filename_component(parent "${dir}/.." ABSOLUTE)
-    if(EXISTS "${parent}/${module}/CMakeLists.txt")
+    if(in_node AND EXISTS "${parent}/${in_node}/CMakeLists.txt" AND EXISTS "${parent}/${in_node}/module.yml")
+      set(${out_var} "${parent}/${in_node}" PARENT_SCOPE)
+      return()
+    endif()
+    if(in_node AND EXISTS "${parent}/robohub-node/${in_node}/CMakeLists.txt")
+      set(${out_var} "${parent}/robohub-node/${in_node}" PARENT_SCOPE)
+      return()
+    endif()
+    if(NOT in_node AND EXISTS "${parent}/${module}/CMakeLists.txt")
       set(${out_var} "${parent}/${module}" PARENT_SCOPE)
       return()
     endif()
     set(dir "${parent}")
   endforeach()
   include(FetchContent)
+  if(in_node)
+    message(STATUS "[${PROJECT_NAME}] fetching robohub-node for ${module}")
+    FetchContent_Declare(robohub-node
+      GIT_REPOSITORY "https://github.com/RoboHubPlatform/robohub-node.git"
+      GIT_TAG main GIT_SHALLOW TRUE GIT_PROGRESS TRUE)
+    FetchContent_GetProperties(robohub-node)
+    if(NOT robohub-node_POPULATED)
+      FetchContent_Populate(robohub-node)
+    endif()
+    set(${out_var} "${robohub-node_SOURCE_DIR}/${in_node}" PARENT_SCOPE)
+    return()
+  endif()
   message(STATUS "[${PROJECT_NAME}] fetching ${module}")
   FetchContent_Declare(${module}
     GIT_REPOSITORY "https://github.com/RoboHubPlatform/${module}.git"
@@ -65,6 +102,7 @@ set(ROBOHUB_CORE_SOURCES
     src/scheduler.c
     src/app.c
     src/diagnostics.c
+    src/health.c
     src/osal_baremetal.c
 )
 
@@ -91,7 +129,7 @@ target_compile_features(robohub-core PUBLIC c_std_11)
 if(PROJECT_IS_TOP_LEVEL AND RHO_BUILD_HOST_TESTS AND NOT RHO_TARGET_IS_BAREMETAL)
   message(STATUS "[robohub-core] registering host unit tests")
   enable_testing()
-  foreach(name event scheduler core osal diagnostics)
+  foreach(name event scheduler core osal diagnostics health)
     add_executable(robohub-core-test-${name} tests/test_${name}.c)
     target_link_libraries(robohub-core-test-${name} PRIVATE robohub-core)
     target_include_directories(robohub-core-test-${name} PRIVATE

@@ -112,6 +112,7 @@ static void loop_thread(void* arg)
         robohub_core_diag_state()->uptime_ms = now;
         (void)robohub_core_event_publish(RH_EVENT_CORE_TICK, &now, (rh_size)sizeof(now));
         robohub_core_app_step(now);
+        robohub_core_watchdog_service(robohub_core_uptime_ms());
         robohub_osal_sleep_ms(RH_CORE_TICK_MS);
     }
     robohub_core_app_stop();

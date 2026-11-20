@@ -67,4 +67,14 @@ config RH_CORE_MAIN_PRIORITY
     help
       The priority of the runtime's loop thread, above the tasks it wakes.
 
+config RH_CORE_WATCHDOG_MS
+    int "Watchdog period (ms)"
+    default 8000
+    help
+      The period the runtime starts the board's watchdog with, in
+      milliseconds; 0 leaves it off. The loop feeds it only while every task
+      has run within its allowance (twice its period plus this period, unless
+      the task declares its own), so a task that hangs, or a loop that stops,
+      lets the board reset. A platform without a watchdog ignores it.
+
 endmenu

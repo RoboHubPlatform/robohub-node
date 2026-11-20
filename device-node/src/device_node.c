@@ -24,6 +24,7 @@
 #include "robohub/core/app.h"
 #include "robohub/core/core.h"
 #include "robohub/core/event.h"
+#include "robohub/core/health.h"
 
 /* One node per program: the runtime's application stages carry no user pointer,
  * so the node the application belongs to is held here. */
@@ -43,6 +44,24 @@ static RoboHubError node_poll_task(robohub_core_task_id id, void* user)
     return node->poll(node->poll_user);
 }
 
+/* HEALTH once per boot (RNODE-HEALTH-0004): on a sealed link once the session
+ * with the gateway is up — sent earlier it would only wait behind the hello —
+ * and on a plain link at the first chance. A session that drops and comes back
+ * does not send it again: it is about the boot, and a DIAG_REQUEST asks anew. */
+// @req RNODE-HEALTH-0004
+static void node_health_once(RoboHubDeviceNode* node)
+{
+    if (node->health_sent || !node->ready) {
+        return;
+    }
+    if (node->config.secure_uid != NULL && !robohub_secure_ready(&node->secure)) {
+        return;
+    }
+    if (ROBOHUB_SUCCEEDED(robohub_device_node_send_health(node))) {
+        node->health_sent = RH_TRUE;
+    }
+}
+
 /* Read what has arrived on the link and offer it to the framing. This is how a
  * command reaches the node: the parser publishes a whole frame on the event bus,
  * and the dispatch below finds it. */
@@ -59,6 +78,7 @@ static RoboHubError node_link_task(robohub_core_task_id id, void* user)
     if (got > 0u) {
         robohub_transport_feed(&node->transport, buffer, got);
     }
+    node_health_once(node);
     return ROBOHUB_OK;
 }
 
@@ -79,6 +99,10 @@ static RoboHubError node_app_start(void)
         robohub_core_task_id link_task = RH_CORE_TASK_INVALID;
         (void)robohub_core_task_add("link", node_link_task, node,
                                     ROBOHUB_DEVICE_NODE_LINK_MS, &link_task);
+    }
+    else {
+        /* Publish-only: no link task to wait for a session in, and no session. */
+        node_health_once(node);
     }
     if (node->poll != NULL && node->config.poll_interval_ms > 0u) {
         return robohub_core_task_add("poll", node_poll_task, node,
@@ -161,6 +185,16 @@ static RoboHubError node_on_control(robohub_event_id id, const void* payload, rh
     return robohub_core_event_publish_with_tx(MESSAGE_ID_CONTROL_RESPONSE,
                                               robohub_core_event_current_tx(),
                                               bytes, (rh_size)CONTROL_RESPONSE_WIRE_SIZE);
+}
+
+/* A diagnostic request asks for the health again (PROTO-0007). */
+// @req RNODE-HEALTH-0004
+static RoboHubError node_on_diag(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id;
+    (void)payload;
+    (void)size;
+    return robohub_device_node_send_health((RoboHubDeviceNode*)user);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -262,7 +296,9 @@ RoboHubError robohub_device_node_run(RoboHubDeviceNode* node)
     (void)robohub_telemetry_enable_event(MESSAGE_ID_POWER_READING, 1u);
     (void)robohub_telemetry_enable_event(MESSAGE_ID_STATE_READING, 1u);
     (void)robohub_telemetry_enable_event(MESSAGE_ID_CONTROL_RESPONSE, 1u);
+    (void)robohub_telemetry_enable_event(MESSAGE_ID_HEALTH, 1u);
     (void)robohub_core_event_subscribe(MESSAGE_ID_CONTROL_REQUEST, node_on_control, node);
+    (void)robohub_core_event_subscribe(MESSAGE_ID_DIAG_REQUEST, node_on_diag, node);
 
     (void)robohub_core_run();
     return ROBOHUB_ERR_STATE; /* the loop is not meant to return */
@@ -351,4 +387,34 @@ RoboHubError robohub_device_node_publish_state(RoboHubDeviceNode* node,
         return ROBOHUB_ERR_PROTOCOL;
     }
     return robohub_core_event_publish(MESSAGE_ID_STATE_READING, payload, (rh_size)STATE_READING_WIRE_SIZE);
+}
+
+// @req RNODE-HEALTH-0004
+RoboHubError robohub_device_node_send_health(RoboHubDeviceNode* node)
+{
+    if (node == NULL) {
+        return ROBOHUB_ERR_INVALID_ARG;
+    }
+    robohub_core_health health;
+    robohub_core_health_get(&health);
+
+    Health message;
+    memset(&message, 0, sizeof(message));
+    if (node->device_count > 0u) {
+        message.device.area_id = node->devices[0].id.area_id;
+        message.device.node_id = node->devices[0].id.node_id;
+    }
+    message.reset_reason = (ResetReason)health.reset_reason;
+    message.boot_count = health.boot_count;
+    message.fault_code = health.has_fault ? health.fault.code : 0u;
+    message.fault_task = health.has_fault ? health.fault.task : (rh_u16)RH_HEALTH_NO_TASK;
+    message.fault_pc = health.has_fault ? health.fault.pc : 0u;
+    message.fault_uptime_ms = health.has_fault ? health.fault.uptime_ms : 0u;
+    message.firmware_version = node->config.firmware_version;
+
+    rh_u8 payload[HEALTH_WIRE_SIZE];
+    if (Health_serialize(&message, payload, sizeof(payload)) == 0u) {
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+    return robohub_core_event_publish(MESSAGE_ID_HEALTH, payload, (rh_size)HEALTH_WIRE_SIZE);
 }

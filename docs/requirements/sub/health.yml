@@ -1,0 +1,90 @@
+# Health on the board (robohub-node Phase 2a): the core's watchdog policy, the
+# reset reason and fault record at boot, and the HEALTH report over the link
+# (RNODE-0008; robohub ADR-0021; this collection's ADR-0002). Proposed.
+level: SUB
+prefix: RNODE-HEALTH
+title: Node health
+requirements:
+  - id: RNODE-HEALTH-0001
+    title: The loop feeds the watchdog only while every task keeps its allowance
+    statement: >
+      With the watchdog period the application's configuration gives it
+      (`CONFIG_RH_CORE_WATCHDOG_MS`, set in the manifest's `config.values` like
+      any other symbol; 8000 when the core is chosen and the platform has a
+      watchdog, none when set to 0), the core shall start the platform's watchdog
+      with it and feed it from the loop only while every registered task has run within
+      its allowance — twice its period plus the watchdog period unless the task
+      declares its own — so a task that hangs or a loop that stops lets the board
+      reset.
+    rationale: Feeding from the loop alone would keep a board alive whose one important task is stuck; feeding only while each task keeps its time is what makes the reset mean something (RNODE-0008).
+    satisfies: [RNODE-0008]
+    decided_by: [ADR-0002, robohub:ADR-0021]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [health, watchdog]
+
+  - id: RNODE-HEALTH-0002
+    title: The core knows at boot why the board restarted
+    statement: >
+      The core shall read the reset reason, the boot count and the fault record
+      (taking it, so it is reported once) during `init`, before any application's
+      `init`, and offer them to the application through its API.
+    rationale: An application may act on a fault reset (a safe state, a delay before driving outputs); the record must be taken before anything can overwrite it.
+    satisfies: [RNODE-0008]
+    decided_by: [ADR-0002]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [health]
+
+  - id: RNODE-HEALTH-0003
+    title: A fault or a watchdog warning leaves a record
+    statement: >
+      The core shall register, where the platform offers them, a fault handler
+      and a watchdog early-warning handler that write the fault record — a code,
+      the task the scheduler was running, the program counter, the uptime — before
+      the board resets, and shall do nothing in them that could fault again
+      (no allocation, no locks, no I/O beyond the record).
+    rationale: The record is only useful if it is written by the failure itself; a handler that faults again leaves nothing.
+    satisfies: [RNODE-0008]
+    decided_by: [ADR-0002]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [health, faults]
+
+  - id: RNODE-HEALTH-0004
+    title: With the link chosen, the board reports its health once per boot
+    statement: >
+      When the link is chosen, the node shall send `HEALTH` (robohub PROTO-0007)
+      once its session with its parent is established after each boot, and again
+      when a diagnostic request asks for it; without the link, nothing is sent and
+      the application still has the values.
+    rationale: Why a board restarted must reach the installation without anyone asking (robohub ADR-0021), and a core-only board must not pull in the link to have health (RNODE-0003).
+    satisfies: [RNODE-0008, RNODE-0011]
+    decided_by: [ADR-0002, robohub:ADR-0021]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [health, link]
+
+  - id: RNODE-HEALTH-0005
+    title: The watchdog policy is tested without a board
+    statement: >
+      Host tests shall drive the core with a fake clock and a fake watchdog and
+      check that it is fed while tasks keep their allowance, not fed once one task
+      stops, not started when the period is 0 or the platform has none, and that
+      the fault record is taken once.
+    rationale: A policy that decides when a board resets must be proven before it runs on one.
+    satisfies: [RNODE-0008]
+    decided_by: [ADR-0002]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [health, tests]

@@ -7,9 +7,11 @@ name: robohub-core
 suites:
   # test_core.c: the lifecycle order; test_scheduler.c: periods, removal, errors;
   # test_event.c: synchronous zero-copy delivery and refusals; test_diagnostics.c:
-  # counters and last errors; test_osal.c: the bare-metal OSAL defaults.
+  # counters and last errors; test_osal.c: the bare-metal OSAL defaults;
+  # test_health.c: the watchdog policy and health at boot, on a fake board.
   # @verifies CORE-0001, CORE-0002, CORE-0003, CORE-0004, CORE-0005, CORE-0006
   # @verifies CORE-0009, CORE-0010, CORE-0011
+  # @verifies RNODE-HEALTH-0001, RNODE-HEALTH-0002, RNODE-HEALTH-0003, RNODE-HEALTH-0005
   - name: unit
     kind: ctest
     tags: [unit, host]

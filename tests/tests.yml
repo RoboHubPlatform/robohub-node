@@ -14,6 +14,10 @@ suites:
     kind: command
     tags: [unit, host]
     command: [rho, test, telemetry]
+  - name: device-node
+    kind: command
+    tags: [unit, host]
+    command: [rho, test, device-node]
   - name: kernels-freertos
     kind: command
     tags: [unit, host]
