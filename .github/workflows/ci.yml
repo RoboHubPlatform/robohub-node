@@ -12,4 +12,8 @@ jobs:
     uses: RoboHubPlatform/robohub/.github/workflows/robohub-ci.yml@main
     secrets: inherit
     with:
-      siblings: robohub-common
+      # robohub-devices and robohub-esp32: requirements here satisfy and verify
+      # theirs (DEVS-*, ESP-0010). robohub-pico: the template test builds the
+      # template for a Pico 2 W, with rho-target's compiler.
+      siblings: robohub-common robohub-devices robohub-esp32 robohub-pico
+      machine_install: rho-target:arm-none-eabi-gcc
