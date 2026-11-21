@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0] - 2026-11-21
+
+Phase 2e: one node template for every board (RNODE-TPL-0001…0003, robohub ADR-0025).
+
+- **template 0.1.0**, new. It is the firmware Mesh builds for every node:
+  - the core, the link, telemetry and the managed layer, and no sensor of its own (Mesh writes `src/sensors.c`);
+  - a Pico 2 W preset and a LOLIN32 Lite preset, each with its own platform as a dependency of that preset only (rho 0.21.0);
+  - no SDK header: the board's console is a link through `robohub_console_write_raw`/`read_byte`, and the network goes through `robohub/net.h`;
+  - a link over a Wi-Fi socket, a UART or the console, and updates over it when the build carries the mesh's update key.
+
+  `tests/template_test.py` builds both presets as they are and as Mesh provisions them; the managed layer is only in the provisioned image. It was moved from robohub-drivers' DRV-TEMP-0005 test. The template is a consumer of robohub/protocol's link schema.
+- **link 0.7.0**: `robohub_transport_connect()` opens the session on a sealed link that has none: it says HELLO, or says it again after the retry time, as a send would. A board with nothing to send, such as the template with no sensor, never started the handshake, so it neither reported its health nor heard an update offer. The template calls it every pass.
+- **managed 0.2.1**: the update on trial, offered again by a gateway asking how it ends, is answered `verified`, not refused as busy (RNODE-UPD-0005, amended). Mesh took "busy" for the end of the update, and failed one the board went on to confirm.
+- **core 0.3.1, link 0.7.0, telemetry 0.1.4, managed 0.2.1**: each adds its siblings and robohub-common only when it is itself the project, which it now checks by its source directory, as robohub-esp32 does. ESP-IDF's `project()` makes every directory look top-level, so in an ESP32 build each module added a second copy of the libraries the generated project had already added.
+
 ## [0.5.0] - 2026-11-20
 
 - **managed 0.2.0**: an image on trial gives up after five minutes unconfirmed (`CONFIG_RH_UPDATE_TRIAL_MS`, RNODE-UPD-0008) through `rh_update_reject()`, counted from when the layer first sees it pending (a board's clock may count from long before this boot). The end to end test adds a fourth case: an image that cannot be healthy before its limit, given up and reported rolled back.

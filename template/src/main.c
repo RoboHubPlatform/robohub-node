@@ -1,0 +1,615 @@
+/**
+ * @file main.c
+ * @brief The node template: the fitted sensors publish, telemetry streams them
+ *        over the board's link, and the managed layer takes updates over it
+ *        (RNODE-TPL-0001..0003, robohub ADR-0025).
+ *
+ * The modules meet here and none of them knows the others:
+ *
+ *   sensors.c         the fitted modules publish SensorReading (Mesh writes it)
+ *   robohub-core      carries the event to its subscribers
+ *   robohub-telemetry subscribed to that event, writes each reading to a sink
+ *   robohub-transport frames each write as COBS, seals it and hands it to the link
+ *   the link          a Wi-Fi socket, a UART, or the board's console
+ *   robohub-managed   answers an update offer on the same link
+ *
+ * Nothing here belongs to one board (RNODE-TPL-0002): the console link is the
+ * platform's raw console (`robohub_console_write_raw`/`read_byte`) — the USB CDC
+ * on a Pico 2 W, UART0 through the USB-serial chip on a LOLIN32 Lite — and the
+ * network is robohub-common's contract, which each platform implements.
+ *
+ * @project RoboHub Platform
+ * @license MIT
+ */
+
+#include <string.h>
+
+#include "platform.h"
+#include "registry.h"
+#include "types.h"
+#include "error.h"
+#include "robohub/hal/console.h"
+#include "robohub/hal/uart.h"
+#include "robohub/hal/timer.h"
+#include "robohub/core/core.h"
+#include "robohub/core/app.h"
+#include "robohub/core/event.h"
+#include "robohub/core/events.h"
+#include "robohub/core/diagnostics.h"
+#include "robohub/core/scheduler.h"
+#include "robohub/transport.h"
+#include "robohub/telemetry.h"
+#include "protocol.h"
+#include "sensors.h"
+
+/* The board's id and key, written into this build by Mesh when it planned the
+ * board, and tracked by no repository. With them the link is authenticated
+ * (robohub-transport's secure.h); a build without them has a plain link. */
+#if defined(__has_include)
+#  if __has_include("robohub_secret.h")
+#    include "robohub_secret.h"
+#  endif
+#endif
+
+#if defined(__has_include)
+#  if __has_include("autoconf.h")
+#    include "autoconf.h"
+#  endif
+#endif
+#if defined(CONFIG_RH_NET) && CONFIG_RH_NET
+#include "robohub/net.h"
+#endif
+
+/* The mesh's update public key, written into this build by Mesh beside the
+ * board's key (robohub_update_key.h). With it, and with the managed layer chosen
+ * (CONFIG_RH_NODE_MANAGED), the board takes firmware updates over its link
+ * (RNODE-TPL-0003, robohub ADR-0022/0023); a manifest must name this board's uid,
+ * so an unprovisioned build takes none. */
+#if defined(__has_include)
+#  if __has_include("robohub_update_key.h")
+#    include "robohub_update_key.h"
+#  endif
+#endif
+#if defined(CONFIG_RH_NODE_MANAGED) && CONFIG_RH_NODE_MANAGED && defined(RH_UPDATE_KEY_PROVISIONED) && \
+    defined(RH_SECURE_PROVISIONED)
+#define RH_EXAMPLE_MANAGED 1
+#include "robohub/managed.h"
+#endif
+
+/* The name every board support package registers its timer under. */
+#define TIMER_NAME "system_timer"
+#define REPORT_PERIOD_MS 500u
+
+/* When the network is enabled, the same frames also go to a TCP gateway.
+ *
+ * No credential is committed here: the SSID and password are empty unless the
+ * build supplies them (`-DRH_WIFI_SSID=... -DRH_WIFI_PASSWORD=...`, or what a
+ * deployment carries as configuration). With an empty SSID the network sink is
+ * simply not started, so the example still builds and runs over USB alone. */
+#if defined(CONFIG_RH_NET) && CONFIG_RH_NET
+#ifndef RH_WIFI_SSID
+#  if defined(CONFIG_RH_WIFI_SSID)
+#    define RH_WIFI_SSID CONFIG_RH_WIFI_SSID
+#  else
+#    define RH_WIFI_SSID ""
+#  endif
+#endif
+#ifndef RH_WIFI_PASSWORD
+#  if defined(CONFIG_RH_WIFI_PASSWORD)
+#    define RH_WIFI_PASSWORD CONFIG_RH_WIFI_PASSWORD
+#  else
+#    define RH_WIFI_PASSWORD ""
+#  endif
+#endif
+#ifndef RH_TELEMETRY_HOST
+#  if defined(CONFIG_RH_TELEMETRY_HOST)
+#    define RH_TELEMETRY_HOST CONFIG_RH_TELEMETRY_HOST
+#  else
+#    define RH_TELEMETRY_HOST "192.168.1.10"
+#  endif
+#endif
+#ifndef RH_TELEMETRY_PORT
+#  if defined(CONFIG_RH_TELEMETRY_PORT)
+#    define RH_TELEMETRY_PORT CONFIG_RH_TELEMETRY_PORT
+#  else
+#    define RH_TELEMETRY_PORT 5000
+#  endif
+#endif
+#endif
+
+#ifndef RH_NODE_TRANSPORT
+#  if defined(CONFIG_RH_NODE_TRANSPORT)
+#    define RH_NODE_TRANSPORT CONFIG_RH_NODE_TRANSPORT
+#  else
+#    define RH_NODE_TRANSPORT "usb"
+#  endif
+#endif
+#ifndef RH_NODE_UART
+#  if defined(CONFIG_RH_NODE_UART)
+#    define RH_NODE_UART CONFIG_RH_NODE_UART
+#  else
+#    define RH_NODE_UART "uart1"
+#  endif
+#endif
+#ifndef RH_NODE_BAUD
+#  if defined(CONFIG_RH_NODE_BAUD)
+#    define RH_NODE_BAUD CONFIG_RH_NODE_BAUD
+#  else
+#    define RH_NODE_BAUD 115200
+#  endif
+#endif
+
+
+/* This board's identity on the bus: the area it is in and its node id within it.
+ * A gateway numbers several areas, so the pair — not the node id alone — is what
+ * names a device. */
+#if defined(CONFIG_RH_AREA_ID)
+#define RH_AREA_ID ((rh_u16)CONFIG_RH_AREA_ID)
+#else
+#define RH_AREA_ID ((rh_u16)1u)
+#endif
+#if defined(CONFIG_RH_NODE_ID)
+#define RH_NODE_ID ((rh_u16)CONFIG_RH_NODE_ID)
+#else
+#define RH_NODE_ID ((rh_u16)1u)
+#endif
+/* What HEALTH says the firmware is; 0 when the build does not say. */
+#if defined(CONFIG_RH_FIRMWARE_VERSION)
+#define RH_FIRMWARE_VERSION ((rh_u16)CONFIG_RH_FIRMWARE_VERSION)
+#else
+#define RH_FIRMWARE_VERSION ((rh_u16)0u)
+#endif
+
+/* Sampling rate is control opcode 1; the control family is general, so a second
+ * command is another opcode rather than another message. */
+#define CONTROL_SAMPLING_RATE 1u
+
+static void emit(const char* text)
+{
+    (void)robohub_console_puts(text);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The link: the transport the network step chose                            */
+/* -------------------------------------------------------------------------- */
+
+static RoboHubTransport node_link;
+#if defined(RH_SECURE_PROVISIONED)
+static RoboHubSecure node_secure;
+#endif
+static RoboHubUART* node_uart;
+static rh_bool link_is_net;
+
+/* Attach the board's authentication to the link, when this build was given the
+ * board's id and key: every frame is sealed, and the first send says hello to the
+ * gateway, so nothing leaves unauthenticated whichever link it is. */
+static rh_u32 node_now_ms(void);
+static void secure_link(void)
+{
+#if defined(RH_SECURE_PROVISIONED)
+    /* The key's epoch and the gateway's key scope: a key the gateway rotates
+     * this board to is kept with the scope, and used after a reboot. */
+#  if !defined(RH_DEVICE_KEY_EPOCH)
+#    define RH_DEVICE_KEY_EPOCH 0u
+#  endif
+#  if defined(RH_HAS_KEY_SCOPE)
+    const rh_u8* scope = RH_KEY_SCOPE;
+#  else
+    const rh_u8* scope = 0;
+#  endif
+    if (robohub_secure_init_epoch(&node_secure, RH_DEVICE_UID, RH_DEVICE_KEY, (rh_u32)RH_DEVICE_KEY_EPOCH, scope,
+                                  robohub_platform_nonce, node_now_ms) == ROBOHUB_OK) {
+        (void)robohub_transport_secure(&node_link, &node_secure);
+        emit("link: authenticated\n");
+    }
+#endif
+}
+
+/* The board's console as a link: one raw write per frame, past the C library's
+ * line handling, which would hold the bytes and rewrite their ends. How a board
+ * does that is its platform's (RNODE-TPL-0002). */
+// @req RNODE-TPL-0002
+static int console_phy_write(const rh_u8* data, rh_size length, void* context)
+{
+    (void)context;
+    return robohub_console_write_raw(data, length) == ROBOHUB_CONSOLE_OK ? 0 : -1;
+}
+
+static int uart_phy_write(const rh_u8* data, rh_size length, void* context)
+{
+    (void)context;
+    if (node_uart == 0 || node_uart->write == 0) {
+        return -1;
+    }
+    return (node_uart->write(node_uart, data, length) == ROBOHUB_OK) ? 0 : -1;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Sensor application                                                        */
+/* -------------------------------------------------------------------------- */
+
+static RoboHubTimer* system_timer;
+
+/* The board's sensors are the generated set in sensors.c. The timer is still
+ * owned here because the diagnostics smoke runs against it. */
+static RoboHubError sensor_init(void)
+{
+    system_timer = robohub_get_timer(TIMER_NAME);
+    sensors_init();
+    return ROBOHUB_OK;
+}
+
+static robohub_core_task_id sample_task = RH_CORE_TASK_INVALID;
+static rh_u16 sample_period_ms = REPORT_PERIOD_MS;
+
+static RoboHubError poll_sensors(robohub_core_task_id id, void* user)
+{
+    (void)id;
+    (void)user;
+    sensors_poll();
+    return ROBOHUB_OK;
+}
+
+static RoboHubError sensor_start(void)
+{
+    return robohub_core_task_add("sensors", poll_sensors, 0, sample_period_ms, &sample_task);
+}
+
+/* A control from the gateway: `CONTROL_REQUEST` in, `CONTROL_RESPONSE` out, the
+ * caller's tx_id carried back so it can match the answer to its request. The
+ * request names the device it is for and carries one argument; sampling rate is
+ * opcode 1, and the period is clamped to one a sensor conversion can meet. The
+ * acknowledgement repeats the device and the opcode and reports what was
+ * actually set, not what was asked for. */
+static RoboHubError on_control(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id;
+    (void)user;
+
+    ControlRequest request;
+    if (!ControlRequest_deserialize((const uint8_t*)payload, (size_t)size, &request)) {
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+
+    ControlResponse response = {
+        .device = request.device,
+        .opcode = request.opcode,
+        .result = 0u,
+        .argument = request.argument,
+    };
+
+    if (request.opcode != CONTROL_SAMPLING_RATE) {
+        response.result = 2u; /* no such command */
+    } else {
+        rh_u32 interval = request.argument;
+        if (interval < 100u) {
+            interval = 100u;
+        }
+        if (ROBOHUB_FAILED(robohub_core_task_set_period(sample_task, interval))) {
+            response.result = 1u;
+        } else {
+            sample_period_ms = (rh_u16)interval;
+            response.argument = sample_period_ms;
+        }
+    }
+
+    rh_u8 bytes[CONTROL_RESPONSE_WIRE_SIZE];
+    if (ControlResponse_serialize(&response, bytes, sizeof(bytes)) == 0u) {
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+    return robohub_core_event_publish_with_tx(MESSAGE_ID_CONTROL_RESPONSE,
+                                              robohub_core_event_current_tx(),
+                                              bytes, (rh_size)CONTROL_RESPONSE_WIRE_SIZE);
+}
+
+/* A diagnostic request: run the smoke the mask asks for and answer with the
+ * runtime's counters and the result. A gateway reads this to tell a board that
+ * stopped from a board whose OneWire bus was never up. */
+static RoboHubError on_diag(robohub_event_id id, const void* payload, rh_size size, void* user)
+{
+    (void)id;
+    (void)user;
+
+    DiagRequest request;
+    if (!DiagRequest_deserialize((const uint8_t*)payload, (size_t)size, &request)) {
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+
+    robohub_core_diagnostics counters;
+    robohub_core_diagnostics_get(&counters);
+
+    rh_u32 probe_ok = 0u;
+    rh_u32 probe_fault = 0u;
+    (void)robohub_core_smoke(system_timer, request.mask, &probe_ok, &probe_fault);
+
+    DiagResponse response = {
+        .device = request.device,
+        .uptime_ms = counters.uptime_ms,
+        .events_published = counters.events_published,
+        .handler_errors = counters.handler_errors,
+        .tasks_run = counters.tasks_run,
+        .task_errors = counters.task_errors,
+        .last_error = (rh_u16)(counters.last_error != (rh_u16)ROBOHUB_OK
+            ? counters.last_error : sensors_last_error()),
+        .probe_ok = probe_ok,
+        .probe_fault = probe_fault,
+    };
+
+    rh_u8 bytes[DIAG_RESPONSE_WIRE_SIZE];
+    if (DiagResponse_serialize(&response, bytes, sizeof(bytes)) == 0u) {
+        return ROBOHUB_ERR_PROTOCOL;
+    }
+    return robohub_core_event_publish_with_tx(MESSAGE_ID_DIAG_RESPONSE,
+                                              robohub_core_event_current_tx(),
+                                              bytes, (rh_size)DIAG_RESPONSE_WIRE_SIZE);
+}
+
+/* Called every pass. Reads whatever the link has delivered and feeds the
+ * transport one byte at a time, so a command from the gateway becomes an event
+ * exactly as a frame from a node does. */
+/* Milliseconds since boot, for an authenticated session's lifetime. */
+static rh_u32 node_now_ms(void)
+{
+    return system_timer != 0 ? (rh_u32)system_timer->get_millis(system_timer) : 0u;
+}
+
+#if defined(CONFIG_RH_NET) && CONFIG_RH_NET
+static RoboHubSocket net_socket;
+/* The network link comes back by itself: a dropped connection or Wi-Fi is
+ * joined and dialled again, waiting a little longer after each failure. */
+static rh_u32 net_next_try_ms;
+static rh_u32 net_backoff_ms = 1000u;
+static rh_bool net_sink_added;
+static void net_reconnect(rh_u32 now_ms);
+static void net_drop(const char* why);
+#endif
+
+static void pump_link(rh_u32 now_ms)
+{
+    /* A node with no sensor has nothing to send, and on a sealed link a send is
+     * what says HELLO: the session is opened here instead, so the board reports
+     * its health and hears an update offer whatever it carries
+     * (RNODE-TPL-0003). Repeated at most every RH_TRANSPORT_HELLO_RETRY_MS. */
+#if defined(CONFIG_RH_NET) && CONFIG_RH_NET
+    if (!link_is_net || net_socket != 0) {
+        (void)robohub_transport_connect(&node_link);
+    }
+#else
+    (void)robohub_transport_connect(&node_link);
+#endif
+    if (link_is_net) {
+#if defined(CONFIG_RH_NET) && CONFIG_RH_NET
+        /* What the gateway sends back — the session, a command — arrives on the
+         * socket and is read into the same transport the readings leave by. */
+        if (net_socket != 0) {
+            rh_u8 buffer[64];
+            int got = robohub_socket_recv(net_socket, buffer, (rh_size)sizeof(buffer), 0u);
+            if (got > 0) {
+                robohub_transport_feed(&node_link, buffer, (rh_size)got);
+            } else if (got == ROBOHUB_SOCKET_ERROR) {
+                /* The gateway went away (a restart, a dropped access point):
+                 * the connection is closed and dialled again. */
+                net_drop("net: the gateway closed the connection; dialling again\n");
+            }
+        } else {
+            net_reconnect(now_ms);
+        }
+#endif
+        return;
+    }
+    if (node_uart != 0 && node_uart->read_available != 0) {
+        rh_u8 buffer[64];
+        rh_size got = node_uart->read_available(node_uart, buffer, sizeof(buffer));
+        for (rh_size i = 0; i < got; i++) {
+            robohub_transport_feed_byte(&node_link, buffer[i]);
+        }
+        return;
+    }
+    for (int i = 0; i < 64; i++) {
+        int byte = robohub_console_read_byte();
+        if (byte < 0) {
+            break;
+        }
+        robohub_transport_feed_byte(&node_link, (rh_u8)byte);
+    }
+}
+
+static const robohub_core_app sensor_app = {
+    .name = "sensor",
+    .init = sensor_init,
+    .start = sensor_start,
+    .step = pump_link,
+};
+
+/* -------------------------------------------------------------------------- */
+/*  The second link: Wi-Fi, framed packets over TCP                           */
+/* -------------------------------------------------------------------------- */
+
+#if defined(CONFIG_RH_NET) && CONFIG_RH_NET
+
+static int net_phy_write(const rh_u8* data, rh_size length, void* context)
+{
+    (void)context;
+    if (net_socket == 0) {
+        return -1;
+    }
+    return (robohub_socket_send(net_socket, data, length) < 0) ? -1 : 0;
+}
+
+/* Close a connection that failed. The next pass dials again, after the back-off. */
+static void net_drop(const char* why)
+{
+    if (net_socket != 0) {
+        robohub_socket_close(net_socket);
+        net_socket = 0;
+    }
+    emit(why);
+    net_next_try_ms = node_now_ms() + net_backoff_ms;
+}
+
+/* Join Wi-Fi when it is down and dial the gateway, at most once per back-off,
+ * which doubles after each failure up to half a minute and starts again from a
+ * second after a success. A new connection says hello again: the session the
+ * board held belongs to the connection the gateway closed. */
+static void net_reconnect(rh_u32 now_ms)
+{
+    if (!net_sink_added || (rh_i32)(now_ms - net_next_try_ms) < 0) {
+        return;
+    }
+    net_next_try_ms = now_ms + net_backoff_ms;
+    if (net_backoff_ms < 30000u) {
+        net_backoff_ms = net_backoff_ms * 2u;
+    }
+    if (robohub_net_status() != ROBOHUB_NET_CONNECTED) {
+        RoboHubWiFiConfig wifi = {
+            .ssid = RH_WIFI_SSID,
+            .password = RH_WIFI_PASSWORD,
+            .timeout_ms = 15000u,
+        };
+        if (robohub_net_wifi_connect(&wifi) != ROBOHUB_OK) {
+            emit("wifi: could not join; trying again\n");
+            return;
+        }
+        char ip[16];
+        if (robohub_net_ip(ip, sizeof(ip)) == ROBOHUB_OK) {
+            emit("wifi: joined, address ");
+            emit(ip);
+            emit("\n");
+        }
+    }
+    RoboHubSocket socket = robohub_socket_create(ROBOHUB_SOCKET_TCP);
+    if (socket == 0) {
+        emit("net: no socket available; trying again\n");
+        return;
+    }
+    if (robohub_socket_connect(socket, RH_TELEMETRY_HOST, RH_TELEMETRY_PORT) != ROBOHUB_OK) {
+        robohub_socket_close(socket);
+        emit("net: gateway unreachable; trying again\n");
+        return;
+    }
+    net_socket = socket;
+    net_backoff_ms = 1000u;
+    secure_link();
+    emit("net: telemetry streams over TCP\n");
+}
+
+/* Set the network link up: the transport and the telemetry sink once, and the
+ * connection as net_reconnect makes it now and again whenever it drops. A board
+ * that cannot reach the gateway keeps trying; it has no other way to report. */
+static void net_sink_start(void)
+{
+    if (RH_WIFI_SSID[0] == '\0') {
+        emit("wifi: no credentials configured; the board cannot report\n");
+        return;
+    }
+    /* The socket is a link like the serial one: frames go out through the
+     * transport, so they are sealed exactly as a serial link's are, and the
+     * gateway's answers come back through it. */
+    const RoboHubTransportPhy phy = { .write = net_phy_write, .context = 0 };
+    (void)robohub_transport_init(&node_link, &phy);
+    RoboHubTelemetrySink net_sink = {
+        .type = ROBOHUB_SINK_TRANSPORT,
+        .handle.transport = &node_link,
+        .enabled = RH_TRUE,
+    };
+    if (robohub_telemetry_add_sink(&net_sink) != ROBOHUB_OK) {
+        emit("net: no room for the network sink\n");
+        return;
+    }
+    net_sink_added = RH_TRUE;
+    net_next_try_ms = node_now_ms();
+    net_reconnect(node_now_ms());
+}
+
+#endif /* CONFIG_RH_NET */
+
+/* -------------------------------------------------------------------------- */
+/*  Entry                                                                     */
+/* -------------------------------------------------------------------------- */
+
+// @req RNODE-TPL-0001, RNODE-TPL-0003
+int main(void)
+{
+    if (robohub_platform_init() != ROBOHUB_OK) {
+        for (;;) {
+        }
+    }
+
+    /* Telemetry first, so the bridge is in place before anything publishes. */
+    (void)robohub_telemetry_init();
+
+    link_is_net = (strcmp(RH_NODE_TRANSPORT, "wifi") == 0) ||
+                  (strcmp(RH_NODE_TRANSPORT, "socket") == 0);
+    RoboHubTransportPhy link = { .write = console_phy_write, .context = 0 };
+    if (strcmp(RH_NODE_TRANSPORT, "uart") == 0) {
+        node_uart = robohub_get_uart(RH_NODE_UART);
+        if (node_uart != 0 && node_uart->init != 0 &&
+            ROBOHUB_SUCCEEDED(node_uart->init(node_uart, RH_NODE_BAUD))) {
+            link.write = uart_phy_write;
+        } else {
+            node_uart = 0;
+            emit("uart: no link; using the console\n");
+        }
+    }
+
+    if (!link_is_net) {
+        (void)robohub_transport_init(&node_link, &link);
+        secure_link();
+        RoboHubTelemetrySink sink = {
+            .type = ROBOHUB_SINK_TRANSPORT,
+            .handle.transport = &node_link,
+            .enabled = RH_TRUE,
+        };
+        (void)robohub_telemetry_add_sink(&sink);
+    }
+
+#if defined(CONFIG_RH_NET) && CONFIG_RH_NET
+    /* WiFi and socket are their own outgoing link; the console stays text. */
+    if (link_is_net) {
+        net_sink_start();
+    }
+#endif
+
+    (void)robohub_core_app_register(&sensor_app);
+#if defined(RH_EXAMPLE_MANAGED)
+    {
+        /* Updates over this board's link (robohub-node's managed layer). */
+        const RoboHubManagedConfig managed = {
+            .transport = &node_link,
+            .uid = RH_DEVICE_UID,
+            .update_key = RH_UPDATE_PUBLIC_KEY,
+            .firmware_version = RH_FIRMWARE_VERSION,
+        };
+        if (ROBOHUB_SUCCEEDED(robohub_managed_init(&managed))) {
+            emit("updates: taken over the link\n");
+        }
+    }
+#endif
+    if (ROBOHUB_FAILED(robohub_core_init(0))) {
+        emit("runtime failed to start\n");
+        for (;;) {
+            if (system_timer != 0) {
+                system_timer->delay_ms(system_timer, 1000u);
+            }
+        }
+    }
+
+    /* The board's health, read by the runtime as it came up: the link reports
+     * it once per boot — when its session is up on a sealed link, at once on a
+     * plain one — and again on a DIAG_REQUEST (robohub-node RNODE-HEALTH-0004). */
+    (void)robohub_transport_report_health(&node_link, RH_AREA_ID, RH_NODE_ID, RH_FIRMWARE_VERSION);
+
+    /* Subscribe after the runtime is up: bringing it up initialises the event
+     * bus, which starts with no subscriptions and would drop this one. */
+    (void)robohub_telemetry_enable_event(MESSAGE_ID_SENSOR_READING, 1u);
+    /* The acknowledgement goes back out the same link, with the caller's tx. */
+    (void)robohub_telemetry_enable_event(MESSAGE_ID_CONTROL_RESPONSE, 1u);
+    (void)robohub_telemetry_enable_event(MESSAGE_ID_DIAG_RESPONSE, 1u);
+    /* And a command from the gateway arrives on it. */
+    (void)robohub_core_event_subscribe(MESSAGE_ID_CONTROL_REQUEST, on_control, 0);
+    (void)robohub_core_event_subscribe(MESSAGE_ID_DIAG_REQUEST, on_diag, 0);
+
+    (void)robohub_core_run();
+    for (;;) {
+    }
+}

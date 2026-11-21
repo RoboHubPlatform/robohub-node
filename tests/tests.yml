@@ -26,3 +26,16 @@ suites:
     kind: command
     tags: [unit, host]
     command: [rho, test, kernels/freertos]
+
+  # The node template builds for every board it declares (RNODE-TPL-0001,
+  # RNODE-TPL-0003): the core, link, telemetry and managed layer on the Pico 2 W
+  # and on the LOLIN32 Lite, each with its own platform (rho 0.21.0), as it is and
+  # as Mesh provisions it — the managed layer only in the provisioned image. A
+  # board whose toolchain is missing is skipped.
+  # On the LOLIN32 Lite it also checks that the image links robohub-esp32's
+  # network contract (ESP-0010) rather than robohub-common's defaults.
+  # @verifies RNODE-TPL-0001, RNODE-TPL-0003, ESP-0010
+  - name: template
+    kind: command
+    tags: [build, template, updates]
+    command: [python3, tests/template_test.py]

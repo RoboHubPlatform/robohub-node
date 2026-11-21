@@ -83,7 +83,12 @@ if(NOT ROBOHUB_COMMON_DIR OR NOT ROBOHUB_CORE_DIR OR NOT ROBOHUB_TRANSPORT_DIR)
   message(FATAL_ERROR "robohub-managed needs robohub-common, robohub-core and robohub-transport")
 endif()
 
-if(PROJECT_IS_TOP_LEVEL)
+# Added only when this module *is* the project. Built as a dependency, the
+# generated project adds these itself, and adding them here too would be two
+# targets of one name. ESP-IDF's `project()` makes every directory look
+# top-level, so the question is asked of the source directory rather than of
+# PROJECT_IS_TOP_LEVEL (as robohub-esp32 does; robohub ADR-0025).
+if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
   add_subdirectory("${ROBOHUB_COMMON_DIR}" robohub-common)
   add_subdirectory("${ROBOHUB_CORE_DIR}" robohub-core)
   add_subdirectory("${ROBOHUB_TRANSPORT_DIR}" robohub-transport)

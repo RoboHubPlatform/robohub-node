@@ -1,0 +1,99 @@
+# The node template's configuration (RNODE-TPL-0003). A board's symbols come
+# from its platform, a sensor's from its module, and Mesh writes the values in
+# project.conf.
+
+config RH_HAL_GPIO
+    bool "GPIO"
+    default y
+
+config RH_HAL_UART
+    bool "UART"
+    default y
+
+config RH_HAL_TIMER
+    bool "Timer"
+    default y
+
+config RH_TRANSPORT
+    bool "Transport"
+    default y
+
+config RH_TELEMETRY
+    bool "Telemetry"
+    default y
+
+config RH_NET
+    bool "Network"
+    default y
+
+# The board's identity on the bus. A gateway attributes a reading to this
+# number, so two boards on one link must not share it.
+# The area this board's readings are numbered in. A gateway owns the area its
+# devices are in, and a board with the same node id in another area is another
+# device.
+config RH_AREA_ID
+    int "Area id"
+    range 1 65535
+    default 1
+
+config RH_NODE_ID
+    int "Node id"
+    range 1 65535
+    default 1
+
+# The network sink. An empty SSID means the node streams over USB only; the
+# values here are the defaults, and a deployment writes them in project.conf.
+config RH_WIFI_SSID
+    string "WiFi SSID"
+    default ""
+
+config RH_WIFI_PASSWORD
+    string "WiFi password"
+    default ""
+
+config RH_TELEMETRY_HOST
+    string "Telemetry gateway host"
+    default ""
+
+config RH_TELEMETRY_PORT
+    int "Telemetry gateway port"
+    range 1 65535
+    default 5000
+
+# The link this node sends its frames on: "wifi" or "socket" (the network
+# above), "uart" (RH_NODE_UART at RH_NODE_BAUD), or "usb" — the board's console,
+# its USB CDC on a Pico 2 W and UART0 through the USB-serial chip on a LOLIN32
+# Lite. Mesh writes these from the connection it planned; a hand build gets the
+# console.
+config RH_NODE_TRANSPORT
+    string "Node transport"
+    default "usb"
+
+config RH_NODE_UART
+    string "Node UART link"
+    default "uart1"
+
+config RH_NODE_BAUD
+    int "Node UART baud"
+    range 1200 3000000
+    default 115200
+
+# Symbols Mesh writes for every node, declared here because a build merges only
+# its own preset's platform (rho 0.21.0): the board's name, its console on USB
+# (a Pico 2 W's; a LOLIN32 Lite's console is UART0 either way) and an update
+# image (a Pico's try-before-you-buy; ESP-IDF needs no flag).
+config RH_BOARD_PICO_2W
+    bool "Pico 2 W"
+    default n
+
+config RH_BOARD_LOLIN32_LITE
+    bool "LOLIN32 Lite"
+    default n
+
+config RH_CONSOLE_USB
+    bool "Console on USB"
+    default n
+
+config RH_UPDATE_IMAGE
+    bool "An image sent as an update"
+    default n

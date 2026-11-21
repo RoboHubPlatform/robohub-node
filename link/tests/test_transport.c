@@ -253,7 +253,8 @@ static void check_health(void)
 
         int before = healths;
         now_ms_value += 5000u;
-        assert(robohub_transport_send(&board, TEST_READING, 0u, reading, 3u) == ROBOHUB_ERR_STATE); /* says hello */
+        /* A board with nothing to send opens its session itself: hello. */
+        assert(robohub_transport_connect(&board) == ROBOHUB_ERR_STATE);
         assert(healths == before && !board.health_sent);
 
         /* Answered under the key the board holds: the keystore may hold one the
@@ -262,6 +263,7 @@ static void check_health(void)
         answer_hello(secure.device_key, hello_seen, session);
         assert(robohub_transport_send(&gateway_end, (robohub_event_id)RH_SECURE_MSG_SESSION, 0u, session, (rh_u16)sizeof(session)) == ROBOHUB_OK);
         assert(robohub_secure_ready(&secure));
+        assert(robohub_transport_connect(&board) == ROBOHUB_OK);   /* up: nothing more to do */
         assert(board.health_sent);
         assert(healths == before + 1);
         assert(health_len == 6u + RH_TRANSPORT_HEALTH_SIZE + 8u);   /* sealed: sid, counter, health, tag */

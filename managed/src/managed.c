@@ -222,6 +222,14 @@ static RoboHubError on_offer(robohub_event_id id, const void* payload, rh_size s
          refusal == RH_UPDATE_REASON_BUSY) && ended_state != 0 && offer.update_id == ended_id) {
         return send_status(ended_id, ended_state, RH_UPDATE_REASON_NONE, 0u);
     }
+    /* The update on trial, offered again: the gateway asks how it ends, and it
+     * has not ended. It is verified and running once; the outcome is said when
+     * it is kept or given up, not refused as another update would be. */
+    rh_update_info trial;
+    if (refusal == RH_UPDATE_REASON_BUSY && !receiving && rh_update_pending(&trial) &&
+        trial.update_id == offer.update_id) {
+        return send_status(offer.update_id, RH_UPDATE_STATE_VERIFIED, RH_UPDATE_REASON_NONE, 0u);
+    }
     if (refusal != RH_UPDATE_REASON_NONE) {
         return send_status(offer.update_id, RH_UPDATE_STATE_REFUSED, refusal, 0u);
     }

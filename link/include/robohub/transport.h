@@ -211,6 +211,18 @@ RoboHubError robohub_transport_send(RoboHubTransport* transport,
                                     const void* payload,
                                     rh_u16 payload_len);
 
+/**
+ * @brief Open the session now, on an authenticated link that has none.
+ *
+ * Says HELLO, or says it again once `RH_TRANSPORT_HELLO_RETRY_MS` has passed
+ * since the last, exactly as a send would — for a board that has nothing to send
+ * yet (a node with no sensor, which still reports its health and takes updates)
+ * and so would otherwise never start the handshake. Cheap to call every pass.
+ * `ROBOHUB_OK` when the session is up, or the link is plain and needs none;
+ * `ROBOHUB_ERR_STATE` while the handshake is under way.
+ */
+RoboHubError robohub_transport_connect(RoboHubTransport* transport);
+
 /** The board's account of its last restart (robohub-protocol PROTO-0007). */
 #define RH_TRANSPORT_MSG_HEALTH       0x0403u
 /** A diagnostic request: answered, among whatever else answers it, with HEALTH. */

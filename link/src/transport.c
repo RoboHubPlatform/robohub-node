@@ -346,6 +346,20 @@ static void transport_hello(RoboHubTransport* transport)
     }
 }
 
+// @req TRAN-SEC-0007, RNODE-TPL-0003
+RoboHubError robohub_transport_connect(RoboHubTransport* transport)
+{
+    if (transport == 0 || transport->phy.write == 0) {
+        return ROBOHUB_ERR_STATE;
+    }
+    RoboHubSecure* secure = transport->secure;
+    if (secure == 0 || robohub_secure_ready(secure)) {
+        return ROBOHUB_OK;
+    }
+    transport_hello(transport);
+    return ROBOHUB_ERR_STATE;
+}
+
 // @req TRAN-0001, TRAN-FRAME-0001, TRAN-FRAME-0004
 static RoboHubError transport_write(RoboHubTransport* transport, rh_u16 msg_id, rh_u16 tx_id,
                                     const void* payload, rh_u16 payload_len)

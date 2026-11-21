@@ -1,0 +1,146 @@
+#
+# The node template — the firmware Mesh builds for every node, on every board the
+# collection supports (RNODE-TPL-0001..0003, robohub ADR-0025).
+#
+# The core carries events, telemetry streams them, the link frames and seals them
+# and reaches the parent over a Wi-Fi socket or a UART, and the managed layer
+# takes firmware updates over that link when the build carries the mesh's update
+# key. The template has no sensor of its own: Mesh writes `src/sensors.c` and
+# `src/sensors.h` for the modules a plan fits to the board, and the default here
+# fits none, so the template builds and links by itself.
+#
+# Each board's platform is a dependency of that board's preset only
+# (`depends[].presets`, `c_connection.variants.<preset>.library`, rho 0.21.0),
+# so one manifest builds for a Pico 2 W and for a LOLIN32 Lite:
+#
+#   rho build -target pico2w .
+#   rho build -target lolin32-lite .
+#
+# @project RoboHub Platform
+# @license MIT
+#
+
+module:
+  name: robohub-node-template
+  id: robohub.node.template
+  type: module
+  version: 0.1.0
+  description: >
+    The firmware Mesh builds for every node: core, link, telemetry and the
+    managed layer, with the sensors a plan fits, for a Pico 2 W or a LOLIN32 Lite.
+
+  maintainer: "Aurel Miron"
+  license: "MIT"
+  created: "2026-11-21"
+
+main: src/main.c
+
+build:
+  language: c
+  sources:
+    - src/main.c
+    - src/sensors.c
+    # The payloads, generated from schemas/link.rho (robohub/protocol
+    # consumers.yml). The same schema generates the gateway's Rho, so both ends
+    # write one layout.
+    - src/protocol/protocol.c
+  output_dir: output
+  presets:
+    - pico2w
+    - lolin32-lite
+
+depends:
+  # The board's platform, for its own preset only.
+  - name: robohub-pico
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-pico
+    git: https://github.com/RoboHubPlatform/robohub-pico
+    branch: main
+    presets: [pico2w]
+  - name: robohub-esp32
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-esp32
+    git: https://github.com/RoboHubPlatform/robohub-esp32
+    branch: main
+    presets: [lolin32-lite]
+  # The node runtime, on every board.
+  - name: robohub-core
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/core
+  - name: robohub-transport
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/link
+  - name: robohub-telemetry
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/telemetry
+  # Updates over the link, chosen by CONFIG_RH_NODE_MANAGED when Mesh writes the
+  # mesh's update key into the build (RNODE-TPL-0003).
+  - name: robohub-managed
+    type: c
+    path: ${ROBOHUB_WORKSPACE}/robohub-node/managed
+
+c_connection:
+  library: "robohub-pico"
+  headers:
+    - platform.h
+    - console.h
+    - gpio.h
+    - timer.h
+    - uart.h
+    - error.h
+    - types.h
+    - registry.h
+  include_dirs:
+    - ${ROBOHUB_WORKSPACE}/robohub-node/template/src/protocol
+    - ${ROBOHUB_WORKSPACE}/robohub-common/include
+    - ${ROBOHUB_WORKSPACE}/robohub-common/include/robohub/hal
+    - ${ROBOHUB_WORKSPACE}/robohub-common/include/robohub/drivers
+    - ${ROBOHUB_WORKSPACE}/robohub-node/core/include
+    - ${ROBOHUB_WORKSPACE}/robohub-node/core/include/robohub/core
+    - ${ROBOHUB_WORKSPACE}/robohub-node/link/include
+    - ${ROBOHUB_WORKSPACE}/robohub-node/telemetry/include
+    - ${ROBOHUB_WORKSPACE}/robohub-node/managed/include
+  variants:
+    pico2w:
+      library: "robohub-pico"
+      include_dirs:
+        - ${ROBOHUB_WORKSPACE}/robohub-pico/include
+        - ${ROBOHUB_WORKSPACE}/robohub-pico/include/robohub/hal
+        - ${ROBOHUB_WORKSPACE}/robohub-pico/include/robohub/platform
+      libraries:
+        - robohub-core
+        - robohub-transport
+        - robohub-telemetry
+        - robohub-managed
+    lolin32-lite:
+      library: "robohub-esp32"
+      include_dirs:
+        - ${ROBOHUB_WORKSPACE}/robohub-esp32/include
+        - ${ROBOHUB_WORKSPACE}/robohub-esp32/include/robohub
+        - ${ROBOHUB_WORKSPACE}/robohub-esp32/include/robohub/hal
+        - ${ROBOHUB_WORKSPACE}/robohub-esp32/include/robohub/platform
+      libraries:
+        - robohub-core
+        - robohub-transport
+        - robohub-telemetry
+        - robohub-managed
+
+config:
+  dialect: linux
+  kconfig_fragments:
+    - Kconfig
+  values_file: project.conf
+
+package:
+  kind: library
+  binary: false
+
+metadata:
+  tags:
+    - template
+    - node
+    - telemetry
+    - transport
+    - updates
+  stability: experimental
+  visibility: public

@@ -41,3 +41,24 @@ and keeps it only once the session is up and every task has kept its time for
 `docs/architecture/adr/0003-*`; robohub ADR-0022). It is tested on a fake board
 and end to end on a Linux host board with robohub-linux's file slot. The chips'
 own slots are Phase 2c (Pico 2 W) and 2d (ESP32).
+
+**Phase 2e — one node template for every board.** `template/` is the firmware
+Mesh builds for every node: the core, the link, telemetry and the managed layer,
+with the sensors a plan fits written by Mesh into `src/sensors.c`, and none by
+default. Each board's platform is a dependency of its own preset only (rho 0.21.0
+`depends[].presets`, `c_connection.variants.<preset>.library`), so one manifest
+builds for a Pico 2 W and for a LOLIN32 Lite:
+
+```sh
+rho build -target pico2w template
+rho build -target lolin32-lite template
+```
+
+The template includes no SDK header. The board's console is reached as a link
+through `robohub_console_write_raw` and `robohub_console_read_byte`, and the
+network through `robohub/net.h`, which each platform implements. It reaches its
+parent over a Wi-Fi socket, a UART or the console (`CONFIG_RH_NODE_TRANSPORT`).
+It takes updates over that link when its build carries the mesh's update key.
+The requirements are `docs/requirements/sub/template.yml` (RNODE-TPL-0001…0003);
+the decision is robohub ADR-0025. `tests/template_test.py` builds both presets
+as they are and as Mesh provisions them.

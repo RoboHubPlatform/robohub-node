@@ -1,0 +1,57 @@
+# The node template (robohub-node Phase 2e): the firmware Mesh builds for every
+# node, on every board the collection supports (RNODE-0012; robohub ADR-0025).
+# Approved 2026-11-21.
+level: SUB
+prefix: RNODE-TPL
+title: The node template
+requirements:
+  - id: RNODE-TPL-0001
+    title: The collection carries one node template for every board
+    statement: >
+      The collection shall carry a node template (`template/`) built on the core,
+      the link, telemetry and the managed layer, with no sensor of its own and a
+      `sensors.c` that a generator replaces, declaring one preset per platform it
+      supports — at least `pico2w` and `lolin32-lite` — with each platform a
+      dependency of its own preset only (`depends[].presets`, rho 0.21.0).
+    rationale: Mesh builds every node from one firmware whose sensors differ (robohub ADR-0025, 2); a template per platform would be changed twice and drift.
+    satisfies: [RNODE-0012, RNODE-0003]
+    decided_by: [robohub:ADR-0025]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-21
+    tags: [template, boards]
+
+  - id: RNODE-TPL-0002
+    title: The template includes no SDK header
+    statement: >
+      The template's sources shall include only robohub-common's contracts and
+      the collection's own headers, never a vendor SDK header; what differs
+      between boards — the console, the network join, the board's uid — shall be
+      reached through the platform's contracts.
+    rationale: A header from one SDK is a build failure on every other board; the platform is where a board's specifics live (robohub ADR-0025, 2).
+    satisfies: [RNODE-0003]
+    decided_by: [robohub:ADR-0025]
+    status: approved
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-21
+    tags: [template, portability]
+
+  - id: RNODE-TPL-0003
+    title: The template links over Wi-Fi or UART and takes updates when provisioned
+    statement: >
+      The template shall reach its parent over a Wi-Fi socket or a UART as its
+      configuration chooses (`CONFIG_RH_LINK_*`), join a Wi-Fi network with the
+      watchdog fed, report its health, and choose the managed layer when its
+      build carries the mesh's update key (`robohub_update_key.h`,
+      `CONFIG_RH_NODE_MANAGED`), building without it otherwise; a build of each
+      preset shall be part of the collection's tests.
+    rationale: What the DS18B20 example did for the Pico (DRV-TEMP-0005), for every board (robohub ADR-0025, 2, 3).
+    satisfies: [RNODE-0012]
+    decided_by: [robohub:ADR-0025, robohub:ADR-0023]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-21
+    tags: [template, link, updates]

@@ -341,6 +341,10 @@ int main(void)
     assert(robohub_managed_init(&config) == ROBOHUB_OK); /* a new boot's layer */
     good_offer(15u, digest);
     expect(15u, RH_UPDATE_STATE_REFUSED, RH_UPDATE_REASON_BUSY, 0u, "nothing while one is on trial");
+    /* The one on trial, offered again by a gateway asking how it ends: not
+     * ended yet, so still verified — not refused. */
+    offer(77u, board_uid, 8u, sizeof image, 192u, digest, secret, RH_MANAGED_OFFER_SIZE);
+    expect(77u, RH_UPDATE_STATE_VERIFIED, RH_UPDATE_REASON_NONE, 0u, "the update on trial offered again is still verified");
     robohub_core_watchdog_service(clock_ms);           /* every task on time from now */
     robohub_core_health h;
     robohub_core_health_get(&h);
